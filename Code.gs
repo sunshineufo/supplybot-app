@@ -1816,7 +1816,7 @@ function receiveReturn(lines, info) {
   requireScreen_('stock');
   info = cleanAdjInfo_(info);
   info.type = 'Returned';
-  info.vendor = info.po = '';
+  info.po = '';   // a return can still name the vendor / company it's tied to (picked from contacts)
   if (!info.from && !info.orderNo) throw new Error('Enter where it came back from or an order #.');
   return receiveLines_(lines, info);
 }
@@ -4518,10 +4518,32 @@ function writeReceiptCol_(rows, header, value) {
   const sheet = adjSheet_(), col = ADJ_HEADERS.indexOf(header) + 1;
   rows.forEach(a => sheet.getRange(a.row, col).setValue(value));
 }
+/**
+ * 🏷 Tag (or fix) a past PO receipt or return: its PM, vendor / company and point of contact, on every row saved with it.
+ * tags: { pm, vendor, contact } — only the ones given change; '' clears one. Recorded in Activity.
+ */
+function setReceiptTags(adjIds, tags) {
+  requireRole_('Editor');
+  requireScreen_('stock');
+  tags = tags || {};
+  const clean = cleanAdjInfo_(tags), cols = { pm: 'PM', vendor: 'Vendor', contact: 'Point of Contact' };
+  return withLock_(() => {
+    const rows = receiptRows_(adjIds), a = rows[0], sheet = adjSheet_(), changed = [];
+    Object.keys(cols).forEach(k => {
+      if (tags[k] === undefined || clean[k] === a[k]) return;
+      const col = ADJ_HEADERS.indexOf(cols[k]) + 1; if (!col) return;
+      rows.forEach(r => sheet.getRange(r.row, col).setValue(asText_(clean[k])));
+      changed.push((k === 'pm' ? 'PM' : k === 'vendor' ? 'Vendor' : 'Contact') + ': ' + (clean[k] || '(none)'));
+    });
+    if (changed.length) logSheet_().appendRow([new Date(), currentUser_(), a.type === RECEIPT_TYPES.po ? 'PO receipt tagged' : 'Return tagged', '',
+      a.type === RECEIPT_TYPES.po ? 'PO ' + (a.po || '') : 'Return' + (a.from ? ' from ' + a.from : '') + (a.orderNo ? ' (' + a.orderNo + ')' : ''), '', '', 0, '', changed.join(' · ')]);
+    return { pm: clean.pm, vendor: clean.vendor, contact: clean.contact, changed: changed.length };
+  });
+}
 function setReceiptLinks(adjIds, links) {
   requireRole_('Editor');
   requireScreen_('stock');
-  const clean = cleanNoteLinks_(links);
+  const seen = {}, clean = cleanNoteLinks_(links).filter(l => { const k = String(l.url).toLowerCase().replace(/[/]+$/, ''); return seen[k] ? false : (seen[k] = true); });   // the same link only once
   return withLock_(() => { const rows = receiptRows_(adjIds); writeReceiptCol_(rows, 'Links', clean.length ? JSON.stringify(clean) : ''); return clean; });
 }
 function addReceiptPdf(adjIds, fileName, dataUrl) {
@@ -4531,6 +4553,8 @@ function addReceiptPdf(adjIds, fileName, dataUrl) {
   return withLock_(() => {
     const rows = receiptRows_(adjIds), a = rows[0];
     const what = a.type === RECEIPT_TYPES.po ? 'PO ' + (a.po || '') + (a.vendor ? ' from ' + a.vendor : '') : 'Return' + (a.from ? ' from ' + a.from : '') + (a.orderNo ? ' (' + a.orderNo + ')' : '');
+    const kb = Math.max(1, Math.round(pdf.bytes.length / 1024));
+    if ((a.pdfs || []).some(f => f.kind !== 'photo' && String(f.name).toLowerCase() === String(pdf.name).toLowerCase() && Math.abs((f.kb || 0) - kb) <= 1)) throw new Error(pdf.name + ' is already attached to this ' + (a.type === RECEIPT_TYPES.po ? 'PO' : 'return') + '.');
     const file = savePdf_(RECEIPT_DOCS_FOLDER, pdf, 'Attached to ' + what + ' from Supplybot');
     const list = (a.pdfs || []).concat([{ id: file.getId(), name: pdf.name, url: file.getUrl(), kb: Math.max(1, Math.round(pdf.bytes.length / 1024)) }]).slice(-20);
     writeReceiptCol_(rows, 'PDFs', JSON.stringify(list));
@@ -4548,7 +4572,8 @@ function addReceiptPhoto(adjIds, fileName, dataUrl, thumb) {
   thumb = /^data:image\/(jpeg|webp);base64,[A-Za-z0-9+\/=]+$/.test(String(thumb || '')) && String(thumb).length < 12000 ? String(thumb) : '';
   const name = String(fileName || 'photo').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 120) || 'photo';
   return withLock_(() => {
-    const rows = receiptRows_(adjIds), a = rows[0];
+    const rows = receiptRows_(adjIds), a = rows[0], kb = Math.max(1, Math.round(bytes.length / 1024));
+    if ((a.pdfs || []).some(f => f.kind === 'photo' && String(f.name).toLowerCase() === name.toLowerCase() && Math.abs((f.kb || 0) - kb) <= 2)) throw new Error(name + ' is already on this ' + (a.type === RECEIPT_TYPES.po ? 'PO' : 'return') + '.');
     const it = DriveApp.getFoldersByName(RECEIPT_DOCS_FOLDER), folder = it.hasNext() ? it.next() : DriveApp.createFolder(RECEIPT_DOCS_FOLDER);
     const file = folder.createFile(Utilities.newBlob(bytes, m[1], name));
     file.setDescription('Photo on ' + (a.type === RECEIPT_TYPES.po ? 'PO ' + (a.po || '') : 'a return') + ' from Supplybot');

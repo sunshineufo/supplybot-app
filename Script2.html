@@ -950,6 +950,15 @@
       onPick: v => { if (od) od.vendor = v; },
       onNew: v => addContactFromField('ovendor', 'vendor', v),
     },
+    rvendor: {
+      input: 'rcv_vendor', noun: 'contact',
+      options: () => contactOptions('vendor'),
+      onPick: v => { if (rcv) rcv.vendor = v; },
+      onNew: v => addContactFromField('rvendor', 'vendor', v),
+    },
+    tgpm: { input: 'tg_pm', noun: 'PM', options: () => COMBOS.rpm.options(), onPick: v => { if (retTag) retTag.pm = v; } },
+    tgvendor: { input: 'tg_vendor', noun: 'contact', options: () => contactOptions('vendor'), onPick: v => { if (retTag) retTag.vendor = v; }, onNew: v => addContactFromField('tgvendor', 'vendor', v) },
+    tgcontact: { input: 'tg_contact', noun: 'contact', options: () => contactOptions('contact'), onPick: v => { if (retTag) retTag.contact = v; }, onNew: v => addContactFromField('tgcontact', 'contact', v) },
     rcontact: {
       input: 'rcv_contact', noun: 'contact',
       options: () => contactOptions('contact'),
@@ -4462,7 +4471,12 @@
   function adjRowHtml(a, withItem) {
     const sign = a.change > 0 ? '+' + a.change : '−' + Math.abs(a.change);
     const extra = [a.vendor && 'Vendor: ' + a.vendor, a.po && 'PO #: ' + a.po, a.from && 'From: ' + a.from, a.orderNo && 'Order #: ' + a.orderNo,
-      a.reason, a.contact && 'Contact: ' + a.contact, adjEpText(a), a.note].filter(Boolean);
+      a.reason, a.contact && 'Contact: ' + a.contact, a.pm && 'PM: ' + a.pm, adjEpText(a), a.note].filter(Boolean);
+    const stop = 'onclick="event.stopPropagation()"', photos = (a.pdfs || []).filter(f => f.kind === 'photo');
+    const att = (a.links || []).map(l => `<span class="ret-att ro"><a href="${esc(cleanUrl(l.url) || '#')}" target="_blank" rel="noopener" ${stop}>🔗 ${esc(l.label || String(l.url).replace(/^https?:[/]{2}/i, ''))}</a></span>`).join('')
+      + (a.pdfs || []).filter(f => f.kind !== 'photo').map(f => `<span class="ret-att ro"><a href="${esc(f.url)}" target="_blank" rel="noopener" ${stop}>📄 ${esc(f.name)}</a></span>`).join('');
+    const attHtml = (photos.length ? `<div class="ret-photos">${photos.map(f => `<span class="ret-ph"><a href="${esc(f.url)}" target="_blank" rel="noopener" ${stop} aria-label="Open photo ${esc(f.name)}">${f.thumb ? `<img src="${esc(f.thumb)}" alt="" loading="lazy">` : '📷'}</a></span>`).join('')}</div>` : '')
+      + (att ? `<div class="ret-atts">${att}</div>` : '');
     const it = withItem ? items.find(i => i.key === a.key) : null;
     return `<div class="adj ${withItem && it ? 'tap' : ''}" ${withItem && it ? `onclick="openDetail('${it.id}')"` : ''}>
         <span class="chg ${a.change > 0 ? 'pos' : 'neg'}">${sign}</span>
@@ -4470,7 +4484,7 @@
           ${withItem ? `<b>${esc(a.name)}</b>${a.partNumber ? ` <small>${esc(a.partNumber)}</small>` : ''}<br>` : ''}
           <span class="t">${esc(a.type || (a.change > 0 ? 'Added' : 'Removed'))}</span> · ${a.before} → ${a.after}
           ${extra.length ? `<div class="x">${esc(extra.join(' · '))}</div>` : ''}
-          <div class="w">${esc(when(a.timestamp))} · ${esc(personName(a.user))}</div>
+          ${attHtml}<div class="w">${esc(when(a.timestamp))} · ${esc(personName(a.user))}</div>
         </span></div>`;
   }
   function adjListHtml(it) {
@@ -4522,6 +4536,7 @@
         <input id="rcvFrom" class="field" maxlength="100" list="rcvFromList" autocomplete="off" placeholder="Job, project or customer" value="${esc(rcv.from)}" oninput="rcv.from=this.value">
         <datalist id="rcvFromList">${fromChoices.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
         ${comboHtml('rcontact', 'Point of Contact', rcv.contact, 'Who brought it back (pick or add a contact)', 'rcv.contact=this.value;')}
+        ${comboHtml('rvendor', 'Vendor / company (optional)', rcv.vendor || '', 'Pick a vendor or company from your contacts', 'rcv.vendor=this.value;')}
         <label>Order # (optional)</label>
         <div class="with-btn">
           <input id="rcvOrder" class="field" maxlength="40" list="rcvOrderList" autocomplete="off" placeholder="e.g. ORD-2026-0003" value="${esc(rcv.orderNo)}"
@@ -4576,13 +4591,16 @@
   }
   function rcvAddLink() {
     const u = cleanUrl($('rcvLinkUrl').value); if (!u) return toast($('rcvLinkUrl').value.trim() ? 'That isn’t a web address' : 'Paste a link first', true);
+    if ((rcv.links || []).some(l => urlKey(l.url) === urlKey(u))) return toast('🧷 That link is already added.', true);
     rcv.links = (rcv.links || []).concat({ url: u, label: $('rcvLinkLabel').value.trim().slice(0, 120) }).slice(0, 25); $('rcvAtt').innerHTML = rcvAttHtml();
   }
   const isPhotoFile = f => /^image[/]/.test(f.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name);
   function rcvPickPdfs(input) {
     const ok = [...input.files].filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf' || isPhotoFile(f)), big = ok.filter(f => !isPhotoFile(f) && f.size > DOC_LIMIT_MB * 1024 * 1024);
     if (big.length) toast(big.map(f => f.name).join(', ') + ` over ${DOC_LIMIT_MB} MB`, true);
-    rcv.pdfFiles = (rcv.pdfFiles || []).concat(ok.filter(f => isPhotoFile(f) || f.size <= DOC_LIMIT_MB * 1024 * 1024)).slice(0, 15); input.value = ''; $('rcvAtt').innerHTML = rcvAttHtml();
+    const have = rcv.pdfFiles || [], dup = ok.filter(f => have.some(h => sameName(h.name, f.name) && h.size === f.size));
+    if (dup.length) toast('🧷 Already added: ' + dup.map(f => f.name).join(', '), true);
+    rcv.pdfFiles = have.concat(ok.filter(f => !dup.includes(f) && (isPhotoFile(f) || f.size <= DOC_LIMIT_MB * 1024 * 1024))).slice(0, 15); input.value = ''; $('rcvAtt').innerHTML = rcvAttHtml();
   }
   const fileDataUrl = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
   async function shrinkPhoto(f) {
@@ -4604,15 +4622,49 @@
       retList = null;
     } catch (e) { fail(e); }
   }
+  const urlKey = u => String(u || '').toLowerCase().replace(/[/]+$/, '');
+  const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  function retSiblings(r) { return (retList || []).filter(x => x !== r && (retKind === 'po' ? r.po && x.po === r.po : r.orderNo && x.orderNo === r.orderNo)); }
+  const retWhere = x => (retKind === 'po' ? 'PO ' + x.po + ' receipt' : x.orderNo + ' return') + ' from ' + when(x.timestamp);
+  let retTag = null;
+  function retTagToggle(i) {
+    const r = retList && retList[i]; if (!r) return;
+    retTag = retTag && retTag.i === i ? null : { i, pm: r.pm || '', vendor: r.vendor || '', contact: r.contact || '' };
+    renderReturns(); requestAnimationFrame(() => { const e = $('retTagBox'); if (e) e.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); });
+  }
+  function retTagHtml(r, po) {
+    return `<div class="ret-tagbox" id="retTagBox">
+      ${comboHtml('tgpm', 'PM', retTag.pm, 'Pick a PM from your contacts', 'retTag.pm=this.value;')}
+      ${comboHtml('tgvendor', po ? 'Vendor' : 'Vendor / company', retTag.vendor, 'Pick a vendor or company', 'retTag.vendor=this.value;')}
+      ${comboHtml('tgcontact', 'Point of contact', retTag.contact, 'Pick or add a contact', 'retTag.contact=this.value;')}
+      <div class="ret-tagb"><button class="btn ghost" onclick="retTag = null; renderReturns()">Cancel</button><button class="btn primary" id="retTagGo" onclick="retTagSave()">Save tags</button></div></div>`;
+  }
+  async function retTagSave() {
+    const r = retTag && retList && retList[retTag.i]; if (!r || viewOnly()) return;
+    const t = { pm: ($('tg_pm') || {}).value || '', vendor: canonicalChoice('vendor', (($('tg_vendor') || {}).value || '').trim()), contact: ($('tg_contact') || {}).value || '' };
+    $('retTagGo').disabled = true;
+    try {
+      const got = await api('setReceiptTags', r.adjIds, t);
+      Object.assign(r, { pm: got.pm, vendor: got.vendor, contact: got.contact });
+      r.lines.forEach(l => delete adjCache[l.key]);
+      retTag = null; renderReturns(); toast(got.changed ? '🏷 Tags saved' : 'Nothing changed');
+    } catch (e) { fail(e); if ($('retTagGo')) $('retTagGo').disabled = false; }
+  }
   async function retAddLink(i) {
     const r = retList && retList[i]; if (!r) return;
     const u = cleanUrl(prompt('Paste the link (packing slip, tracking, photos…):', '') || ''); if (!u) return;
+    if ((r.links || []).some(l => urlKey(l.url) === urlKey(u))) return toast('🧷 That link is already on this one.', true);
+    const twin = retSiblings(r).find(x => (x.links || []).some(l => urlKey(l.url) === urlKey(u)));
+    if (twin && !confirm(`That link is already on the ${retWhere(twin)}. Add it here too?`)) return;
     const label = (prompt('Label (optional):', '') || '').trim().slice(0, 120);
     try { r.links = await api('setReceiptLinks', r.adjIds, (r.links || []).concat({ url: u, label })); renderReturns(); toast('🔗 Link added'); } catch (e) { fail(e); }
   }
   async function retAddPdf(i, input) {
     const r = retList && retList[i]; if (!r) return;
     for (const f of [...input.files]) {
+      if ((r.pdfs || []).some(x => sameName(x.name, f.name))) { toast('🧷 ' + f.name + ' is already on this one.', true); continue; }
+      const twin = retSiblings(r).find(x => (x.pdfs || []).some(y => sameName(y.name, f.name)));
+      if (twin && !confirm(`${f.name} is already on the ${retWhere(twin)}. Attach it here too?`)) continue;
       if (isPhotoFile(f)) { toast('📷 Attaching ' + f.name + '…'); try { const sp = await shrinkPhoto(f); r.pdfs = await api('addReceiptPhoto', r.adjIds, f.name, sp.full, sp.thumb); renderReturns(); } catch (e) { fail(e); } continue; }
       if (!(/\.pdf$/i.test(f.name) || f.type === 'application/pdf')) { toast(f.name + ' isn’t a PDF or a photo', true); continue; }
       if (f.size > DOC_LIMIT_MB * 1024 * 1024) { toast(f.name + ` is over ${DOC_LIMIT_MB} MB`, true); continue; }
@@ -4746,6 +4798,7 @@
       const o = rcvOrder();
       if (o) rcv.orderNo = o.orderNo;
       if (!rcv.from.trim() && !rcv.orderNo.trim()) return toast('Enter where it came back from or an order #', true);
+      rcv.vendor = canonicalChoice('vendor', String(rcv.vendor || '').trim());
     } else {
       rcv.vendor = canonicalChoice('vendor', rcv.vendor.trim());
       if (!rcv.po.trim() && !rcv.vendor) return toast('Enter a PO # or a vendor', true);
@@ -4758,7 +4811,7 @@
     $('rcvSave').disabled = true;
     try {
       const res = ret
-        ? await api('receiveReturn', lines, { from: rcv.from.trim(), orderNo: rcv.orderNo.trim(), reason: rcv.reason, contact: String(rcv.contact || '').trim(), pm: String(rcv.pm || '').trim(), note: rcv.note.trim() })
+        ? await api('receiveReturn', lines, { from: rcv.from.trim(), orderNo: rcv.orderNo.trim(), reason: rcv.reason, contact: String(rcv.contact || '').trim(), vendor: rcv.vendor || '', pm: String(rcv.pm || '').trim(), note: rcv.note.trim() })
         : await api('receivePo', lines, { vendor: rcv.vendor, po: rcv.po.trim(), pm: String(rcv.pm || '').trim(), note: rcv.note.trim() });
       rcvAttachAfter(res.adjustments.map(a => a.id), (rcv.links || []).slice(), (rcv.pdfFiles || []).slice());
       res.items.forEach((saved, i) => {
@@ -4833,7 +4886,9 @@
     const units = r.lines.reduce((n, l) => n + l.qty, 0);
     const po = retKind === 'po';
     const what = (po ? [r.po && 'PO #: ' + r.po, r.vendor && 'Vendor: ' + r.vendor]
-      : [r.from && 'From: ' + r.from, r.orderNo && 'Order #: ' + r.orderNo, r.reason, r.contact && 'Contact: ' + r.contact]).concat(r.pm ? ['PM: ' + r.pm] : []).filter(Boolean).join(' · ');
+      : [r.from && 'From: ' + r.from, r.orderNo && 'Order #: ' + r.orderNo, r.reason, r.vendor && 'Vendor: ' + r.vendor, r.contact && 'Contact: ' + r.contact]).concat(po && r.contact ? ['Contact: ' + r.contact] : [], r.pm ? ['PM: ' + r.pm] : []).filter(Boolean).join(' · ');
+    const missing = [!r.pm && 'PM', !r.vendor && (po ? 'vendor' : 'vendor / company')].filter(Boolean);
+    const tagBtn = viewOnly() ? '' : `<button class="ret-att-add ret-tag${missing.length ? ' need' : ''}" onclick="retTagToggle(${i})" aria-expanded="${retTag && retTag.i === i}">🏷 ${missing.length ? 'Add ' + missing.join(' & ') : 'Edit tags'}</button>`;
     const att = `${(r.links || []).map((l, j) => `<span class="ret-att"><a href="${esc(cleanUrl(l.url) || '#')}" target="_blank" rel="noopener">🔗 ${esc(l.label || l.url.replace(/^https?:\/{2}/i, ''))}</a>${viewOnly() ? '' : `<button onclick="retRemoveLink(${i}, ${j})" aria-label="Remove link">✕</button>`}</span>`).join('')}
       ${(r.pdfs || []).filter(f => f.kind !== 'photo').map(f => `<span class="ret-att"><a href="${esc(f.url)}" target="_blank" rel="noopener">📄 ${esc(f.name)}</a>${viewOnly() ? '' : `<button onclick="retRemovePdf(${i}, '${esc(f.id)}')" aria-label="Remove PDF">✕</button>`}</span>`).join('')}
       ${viewOnly() ? '' : `<button class="ret-att-add" onclick="retAddLink(${i})">＋ Link</button><label class="ret-att-add"><input type="file" accept="application/pdf,.pdf" multiple hidden onchange="retAddPdf(${i}, this)">＋ PDF</label><label class="ret-att-add"><input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onchange="retAddPdf(${i}, this)">＋ Photo</label>`}`;
@@ -4843,7 +4898,7 @@
       <div class="ret-top"><b>${po ? '📥' : '↩️'} ${units} unit${units === 1 ? '' : 's'}</b><span class="muted">${esc(when(r.timestamp))} · ${esc(personName(r.user))}</span></div>
       ${what ? `<div class="ret-what">${esc(what)}</div>` : ''}
       ${r.note ? `<div class="muted ret-what">${esc(r.note)}</div>` : ''}
-      ${photoRow}<div class="ret-atts">${att}</div>
+      ${photoRow}<div class="ret-atts">${tagBtn}${att}</div>${retTag && retTag.i === i ? retTagHtml(r, po) : ''}
       <div class="ret-lines">${r.lines.map(l => { const it = items.find(x => x.key === l.key);
         return `<div class="${it ? 'tap' : ''}" ${it ? `onclick="openDetail('${esc(it.id)}')"` : ''}><span class="chg pos">+${l.qty}</span> ${esc(l.name)}${l.endpoints.length ? ` <span class="muted">· ${esc(l.endpoints.join(', '))}</span>` : ''}</div>`; }).join('')}</div>
       <div class="ret-foot">${r.tracker ? `<span class="pm-sent">${esc(trackerText(r.tracker))}</span>` : `<span class="ret-todo">⚠ Not in the tracker yet</span>`}
