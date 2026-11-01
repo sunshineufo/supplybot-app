@@ -699,7 +699,11 @@
       document.addEventListener('pointerdown', e => { if (!e.target.closest('#qfab')) qfabClose(); }, true); }
     const items = [['🚚', 'New order', 'qfabGo(\'order\')', canSee('orders') && !viewOnly()], ['📝', 'New note', 'qfabGo(\'note\')', true], ['📦', 'New item', 'qfabGo(\'item\')', canEdit()]].filter(x => x[3]);
     f.hidden = !qfabOn() || !me || !me.role;
-    f.innerHTML = `<div class="qfab-m" id="qfabM" hidden role="menu">${items.map(([ic, l, go]) => `<button role="menuitem" onclick="${go}"><span>${ic}</span>${l}</button>`).join('')}</div>
+    const qp = pins.map((p, i) => ({ p, i, k: 'pin' })).concat(tagPins.map((p, i) => ({ p: Object.assign({ tag: true }, p), i, k: 'tag' }))).filter(x => inQc(x.p));
+    f.innerHTML = `<div class="qfab-m" id="qfabM" hidden role="menu">${qp.length ? `<div class="qf-pins">${qp.map(({ p, i, k }) => `<button role="menuitem" class="qf-pin" onclick="qfabPinGo('${k}', ${i})"
+        oncontextmenu="event.preventDefault(); qfabPinEdit('${k}', ${i})" onpointerdown="qfabPinHold(event, this, '${k}', ${i})" onpointerup="pinRelease()" onpointerleave="pinRelease()" data-comic="${esc(p.label)}" data-comic-sub="Tap to open · hold to edit">
+        <span class="qf-face${p.tag && !pinEmos()[freeKey(p)] && !pinNatives()[freeKey(p)] ? ' tagpin-btn ' + tagColor(p.key) : ''}">${pinFace(p)}</span><span class="qf-lab">${esc(p.label)}</span></button>`).join('')}<small class="qf-pins-l">📌 Pinned here</small></div>` : ''}
+      ${items.map(([ic, l, go]) => `<button role="menuitem" onclick="${go}"><span>${ic}</span>${l}</button>`).join('')}</div>
       <button class="qfab-b" onclick="qfabToggle()" aria-label="Create new" aria-haspopup="menu" aria-expanded="false" data-tip="New order, note or item"><span class="qf-plain">＋</span></button>`;
     requestAnimationFrame(syncQfabLook);
   }
@@ -720,6 +724,19 @@
   }
   function qfabToggle() { const m = $('qfabM'), b = document.querySelector('.qfab-b'); if (!m) return; m.hidden = !m.hidden; b.setAttribute('aria-expanded', String(!m.hidden)); $('qfab').classList.toggle('open', !m.hidden); }
   function qfabClose() { const m = $('qfabM'); if (m && !m.hidden) qfabToggle(); }
+  const inQc = p => !!(p && p.qc) && qfabOn();
+  function qfabPinGo(k, i) { if (pinHeld) { pinHeld = false; return; } qfabClose(); if (k === 'tag') openTagPin(i); else openPin(i); }
+  function qfabPinEdit(k, i) { qfabClose(); const p = k === 'tag' ? tagPins[i] : pins[i]; if (p) openPinCard(k === 'tag' ? ['tag', p.kind, p.key] : [p.t, p.ref]); }
+  function qfabPinHold(e, el, k, i) { pinHoldStart(e, el, () => qfabPinEdit(k, i)); }
+  function setPinQc(ref, v) {
+    const i = pinIndex(ref); if (i < 0) return;
+    const list = ref[0] === 'tag' ? tagPins : pins;
+    if (v) list[i].qc = true; else delete list[i].qc;
+    if (v && !qfabOn()) { try { localStorage.setItem(emoKey('qfab'), '1'); } catch (e) {  } }
+    if (ref[0] === 'tag') saveTagPins(); else savePins();
+    pinCardRefresh();
+    toast(v ? '＋ Moved to quick create: tap ＋ to find it' : '📌 Back on the screen');
+  }
   function qfabGo(k) { qfabClose(); if (typeof closeBarSearch === 'function') closeBarSearch(); if (k === 'order') newOrder(); else if (k === 'item') openForm(); else { openMyNotes(); newMyNote(); } }
   let timerPinT = 0;
   function runningTimers() {
@@ -1440,6 +1457,7 @@
     ['pinBar', 'suiPins'].forEach(id => { const bar = $(id); if (bar) bar.innerHTML = floating ? '' : pinButtonsHtml(id === 'pinBar' ? 'refresh pin-btn' : 'sui-cmt pin-btn') + tagPinButtonsHtml() + (pins.length + tagPins.length ? pinGearHtml(id === 'pinBar' ? 'refresh' : 'sui-cmt') : ''); });
     renderPinFloat();
     renderPinFree();
+    if (typeof applyQfab === 'function' && $('qfab')) applyQfab();
     syncTagPinsActive();
     if ($('sheet') && $('sheet').dataset.panel === 'profile' && $('pinMgr')) $('pinMgr').innerHTML = pinMgrHtml();
     if (gearView && $('gearMenu')) gearRefresh();
@@ -1533,7 +1551,7 @@
   function freePos() { try { return JSON.parse(localStorage.getItem('pinFreePos')) || {}; } catch (e) { return {}; } }
   function renderPinFree() {
     let box = $('pinFree');
-    const all = pins.map((p, i) => ({ p, i, kind: 'pin' })).concat(tagPins.map((p, i) => ({ p: Object.assign({ tag: true }, p), i, kind: 'tag' })));
+    const all = pins.map((p, i) => ({ p, i, kind: 'pin' })).concat(tagPins.map((p, i) => ({ p: Object.assign({ tag: true }, p), i, kind: 'tag' }))).filter(x => !inQc(x.p));
     if (pinsWhere() !== 'free' || !all.length) { if (box) box.remove(); return; }
     if (!box) { box = document.createElement('div'); box.id = 'pinFree'; box.className = 'pin-free'; document.body.appendChild(box); }
     const pos = freePos(), st = pinLook().style, wide = PIN_STYLES.find(x => x[0] === st)[3], tall = PIN_STYLES.find(x => x[0] === st)[4];
@@ -1883,7 +1901,7 @@
   function setPinsWhere(v) { try { localStorage.setItem('pinsWhere', v); } catch (e) {  } renderPins(); if ($('sheet').dataset.panel === 'profile') { const t = $('sheet').scrollTop; renderProfile(); $('sheet').scrollTop = t; } }
   function renderPinFloat() {
     let el = $('pinFloat');
-    const any = pins.length + tagPins.length;
+    const any = pins.filter(p => !inQc(p)).length + tagPins.filter(p => !inQc(p)).length;
     if (pinsWhere() !== 'float' || !any) { if (el) el.remove(); return; }
     if (!el) {
       el = document.createElement('div'); el.id = 'pinFloat'; el.className = 'pin-float'; el.setAttribute('role', 'toolbar'); el.setAttribute('aria-label', 'Pins');
@@ -1952,6 +1970,7 @@
         <button class="pc-x" onclick="closePinCard()" aria-label="Close">✕</button></div>
       ${pinCardRef[0] === 'filter' ? `<form class="pc-name" onsubmit="event.preventDefault(); renameFilterPin(this.elements.n.value)"><input name="n" class="field" maxlength="60" value="${esc(p.label)}" aria-label="Name this pinned search"><button class="btn" type="submit">Rename</button></form>` : ''}
       ${pinPickerHtml(p)}
+      <button class="pc-qc${p.qc ? ' on' : ''}" onclick="setPinQc(${r}, ${!p.qc})" aria-pressed="${!!p.qc}">${p.qc ? '📌 Show it on the screen again' : '＋ Keep it in quick create (not on the screen)'}<small>${p.qc ? 'It’s in the ＋ menu now' : 'It moves into the ＋ menu, above New order'}</small></button>
       <div class="pc-acts">${pinCardFresh ? `<button class="btn ghost" onclick="removePinRef(${r}); toast('Unpinned')">Undo pin</button>`
         : `<button class="btn ghost pc-un" onclick="removePinRef(${r}); toast('Unpinned')">📌✕ Unpin</button><button class="btn ghost" onclick="pinCardOpen()">Open ›</button>`}
         <button class="btn primary" onclick="closePinCard()">Done</button></div></div>`;
@@ -1986,7 +2005,7 @@
     const picker = pinPickerHtml;
     const row = (p, i, list) => `<div class="pm-row"><button class="pm-ic ${p.tag && !em[freeKey(p)] ? 'tagpin-btn ' + tagColor(p.key) : ''}${em[freeKey(p)] ? ' has-emo' : ''}${pp[freeKey(p)] && p.t === 'item' ? ' has-pic' : ''}" onclick="pinEmoToggle(${esc(JSON.stringify(freeKey(p)))})"
         aria-expanded="${pinEmoOpen === freeKey(p)}" data-tip="${p.t === 'item' ? 'Tap to put the item photo or one of your emojis on this pin' : 'Tap to put one of your emojis on this pin'}" aria-label="Choose an emoji for ${esc(p.label)}">${pinFace(p)}</button>
-      <span class="pm-l">${esc(p.label)}</span>
+      <span class="pm-l">${esc(p.label)}${inQc(p) ? ' <small class="pm-qc">in ＋</small>' : ''}</span>
       <button onclick="movePin(${esc(JSON.stringify(p.tag ? ['tag', p.kind, p.key] : [p.t, p.ref]))}, -1)" ${i ? '' : 'disabled'} aria-label="Move up">↑</button>
       <button onclick="movePin(${esc(JSON.stringify(p.tag ? ['tag', p.kind, p.key] : [p.t, p.ref]))}, 1)" ${i < list.length - 1 ? '' : 'disabled'} aria-label="Move down">↓</button>
       <button class="pm-x" onclick="removePinRef(${esc(JSON.stringify(p.tag ? ['tag', p.kind, p.key] : [p.t, p.ref]))})" aria-label="Remove">✕</button></div>${pinEmoOpen === freeKey(p) ? picker(p) : ''}`;
@@ -2064,7 +2083,7 @@
     .observe($('sheet'), { attributes: true, attributeFilter: ['class', 'data-detail', 'data-order', 'data-panel'] });
   if (window.MutationObserver && $('scanner')) new MutationObserver(() => requestAnimationFrame(syncTagPinsActive)).observe($('scanner'), { attributes: true, attributeFilter: ['class'] });
   function tagPinButtonsHtml() {
-    return tagPins.map((p, i) => `<button class="tagpin-btn ${tagColor(p.key)}${tagPinOn(p) ? ' tp-on' : ''}" data-tk="${esc(p.kind + '|' + p.key)}" data-letter="${esc(String(p.label).trim().charAt(0).toUpperCase() || '#')}" aria-pressed="${tagPinOn(p)}" data-comic="🏷 ${esc(p.label)}" data-comic-sub="${tagPinOn(p) ? 'Filter on · tap to turn off' : 'Tap to show ' + (p.kind === 'order' ? 'orders' : 'items') + ' with this tag'}"
+    return tagPins.map((p, i) => inQc(p) ? '' : `<button class="tagpin-btn ${tagColor(p.key)}${tagPinOn(p) ? ' tp-on' : ''}" data-tk="${esc(p.kind + '|' + p.key)}" data-letter="${esc(String(p.label).trim().charAt(0).toUpperCase() || '#')}" aria-pressed="${tagPinOn(p)}" data-comic="🏷 ${esc(p.label)}" data-comic-sub="${tagPinOn(p) ? 'Filter on · tap to turn off' : 'Tap to show ' + (p.kind === 'order' ? 'orders' : 'items') + ' with this tag'}"
       aria-label="Show ${p.kind === 'order' ? 'orders' : 'items'} tagged ${esc(p.label)}" onclick="openTagPin(${i})" oncontextmenu="event.preventDefault(); unpinTagAsk(${i})"
       onpointerdown="tagPinHold(${i}, event, this)" onpointerup="pinRelease()" onpointerleave="pinRelease()">${tagPinOn(p) ? pinBotSvg() : pinFace(Object.assign({ tag: true }, p))}</button>`).join('');
   }
@@ -2084,7 +2103,7 @@
     syncTagPinsActive();
   }
   function pinButtonsHtml(cls) {
-    return pins.map((p, i) => `<button class="${cls}${pinPageOpen(p) ? ' tp-on' : ''}" data-pk="${esc(p.t + '|' + p.ref)}" data-ic="${esc(p.ic || '📌')}" data-comic="${esc(p.label)}" ${p.t === 'link' ? `data-comic-src="${esc(linkPinSource(p))}"` : ''} data-comic-sub="${pinPageOpen(p) ? 'Tap to close' : 'Tap to open · hold to edit'}" aria-label="Open pinned ${esc(p.label)}"
+    return pins.map((p, i) => inQc(p) ? '' : `<button class="${cls}${pinPageOpen(p) ? ' tp-on' : ''}" data-pk="${esc(p.t + '|' + p.ref)}" data-ic="${esc(p.ic || '📌')}" data-comic="${esc(p.label)}" ${p.t === 'link' ? `data-comic-src="${esc(linkPinSource(p))}"` : ''} data-comic-sub="${pinPageOpen(p) ? 'Tap to close' : 'Tap to open · hold to edit'}" aria-label="Open pinned ${esc(p.label)}"
       onclick="openPin(${i})" oncontextmenu="event.preventDefault(); unpinAsk(${i})" onpointerdown="pinHold(${i}, event, this)" onpointerup="pinRelease()" onpointerleave="pinRelease()">${pinPageOpen(p) ? pinBotSvg() : pinFace(p)}</button>`).join('');
   }
   let pinTimer = null, pinHeld = false;

@@ -5088,4 +5088,17 @@
   .qfab-b .qf-ico .ht-ring { background: none !important; }
   .qfab-b .qf-plus { color: var(--brand) !important; text-shadow: 0 0 2px var(--card), 0 0 6px var(--card); font-weight: 600; }
   .qfab-b .qf-ico .ht-corners { opacity: .8 !important; }
+  /* 📌 Pins kept in the ＋ quick-create menu */
+  .qf-pins { display: grid; gap: 6px; justify-items: end; padding: 0 0 6px; margin-bottom: 2px; border-bottom: 1px dashed color-mix(in srgb, var(--text) 25%, transparent); }
+  .qf-pins-l { justify-self: end; font-size: 10.5px; font-weight: 700; color: var(--muted); text-shadow: 0 0 3px var(--card), 0 0 6px var(--card); }
+  .qfab-m .qf-pin { max-width: min(260px, 70vw); padding: 7px 14px 7px 8px; }
+  .qfab-m .qf-pin .qf-face { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-size: 17px; overflow: hidden; }
+  .qfab-m .qf-pin .qf-face.tagpin-btn { margin: 0; border: 0; background: var(--tc, var(--brand)); color: #fff; font-size: 13px; }
+  .qfab-m .qf-pin .qf-face .pin-pic { width: 100%; height: 100%; object-fit: cover; }
+  .qfab-m .qf-pin .qf-face .cemo { width: 120%; height: 120%; }
+  .qfab-m .qf-pin .qf-lab { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .pc-qc { display: grid; gap: 2px; width: 100%; margin-top: 10px; padding: 10px 12px; border-radius: 12px; border: 1px dashed color-mix(in srgb, var(--brand) 55%, var(--line)); background: none; color: var(--text); font: inherit; font-size: 13.5px; font-weight: 700; text-align: left; cursor: pointer; }
+  .pc-qc small { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+  .pc-qc.on { background: var(--brand-soft); border-style: solid; }
+  .pm-qc { padding: 1px 6px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: 10.5px; font-weight: 800; }
 </style>
