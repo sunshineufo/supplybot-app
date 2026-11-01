@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script src="config.js"></script>
 <style>
   :root { --brand: #94ba65; --ink: #111; --bg: #f4f7ef; --muted: #5b6472; }
   @media (prefers-color-scheme: dark) { :root { --bg: #0e1410; --ink: #eef3e8; --muted: #9aa59a; } }
@@ -28,11 +29,20 @@
   .steps { text-align: left; margin: 16px 0 0; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 6%, transparent); font-size: 14.5px; }
   .steps ol { margin: 6px 0 0; padding-left: 20px; } .steps li { margin: 4px 0; }
   .hide { display: none !important; }
+  /* in the installed app: Supplybot fills the screen inside the app (no browser bar) */
+  #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #111; display: none; }
+  body.framed { background: #111; padding: 0; } body.framed #frame { display: block; } body.framed .card { display: none; }
+  #help { position: fixed; left: 12px; right: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 5; padding: 14px; border-radius: 18px; background: #fff; color: #111; box-shadow: 0 12px 30px rgba(0,0,0,.35); text-align: left; }
+  #help p { color: #475569; margin: 4px 0 10px; font-size: 14px; } #help .row { display: flex; gap: 8px; } #help .btn { margin: 0; padding: 12px; font-size: 15px; }
+  #help .again { background: #e5e7eb; color: #111; }
   .warn { margin-top: 14px; padding: 12px; border-radius: 12px; background: #fff7ed; color: #7c2d12; font-size: 14px; text-align: left; }
   @media (prefers-reduced-motion: reduce) { .bot { animation: none; } }
 </style>
 </head>
 <body>
+<iframe id="frame" title="Supplybot" allow="camera; microphone; geolocation; clipboard-read; clipboard-write; fullscreen; web-share" referrerpolicy="origin"></iframe>
+<div id="help" class="hide"><b>Supplybot is taking a while…</b><p>If Google wants you to sign in, open Supplybot once to sign in, then come back and tap Try again.</p>
+  <div class="row"><a class="btn go" id="signin" href="#" target="_blank" rel="noopener">Sign in ›</a><button class="btn again" id="again">Try again</button></div></div>
 <div class="card">
   <div class="bot"><svg width="100%" height="100%" viewBox="-20 -20 480 490" aria-hidden="true" focusable="false"><g fill="rgb(17, 17, 17)">
       <rect x="85" y="3" width="25" height="72" rx="12.5" fill="rgb(17, 17, 17)"></rect><rect x="190" y="3" width="25" height="72" rx="12.5" fill="rgb(17, 17, 17)"></rect>
@@ -50,9 +60,8 @@
   <div class="warn hide" id="setup"><b>One more step:</b> open <code>index.html</code> and paste Supplybot’s address into the <code>APP_URL</code> line (see README.md).</div>
 </div>
 <script>
-  // ▼▼▼ Paste Supplybot's address here (Supplybot → ⚙ → 📲 Install on your phone → Copy), between the quotes ▼▼▼
-  const APP_URL = 'https://script.google.com/a/macros/envirosparkenergy.com/s/AKfycbzTKH3HIqbIZvSEoqUYioNzVFqmK0fwQAlX3s_DWG_JwEko0-PmOJIoZmJCAeOf4lW7/exec';
-  // ▲▲▲
+  // Supplybot's address comes from config.js (SUPPLYBOT_URL), or this line if config.js is missing
+  const APP_URL = window.SUPPLYBOT_URL || 'PASTE_SUPPLYBOT_ADDRESS_HERE';
 
   const ok = /^https:[/][/]script[.]google[.]com[/]/.test(APP_URL);
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -61,9 +70,12 @@
   if (!ok) { $('setup').classList.remove('hide'); $('open').classList.add('hide'); }
   else {
     $('open').href = APP_URL;
-    if (standalone) {   // opened from the home screen: straight into Supplybot
-      $('msg').textContent = 'Opening Supplybot…';
-      setTimeout(() => location.replace(APP_URL), 350);
+    if (standalone) {   // opened from the home screen: Supplybot fills the app (no browser bar)
+      const frame = $('frame'); let ready = false, waitT = 0;
+      const load = () => { ready = false; $('help').classList.add('hide'); frame.src = APP_URL; clearTimeout(waitT); waitT = setTimeout(() => { if (!ready) $('help').classList.remove('hide'); }, 15000); };
+      addEventListener('message', e => { if (/^https:[/][/]([a-z0-9-]+[.])*(google[.]com|googleusercontent[.]com)$/i.test(e.origin) && e.data && e.data.supplybot === 'ready') { ready = true; $('help').classList.add('hide'); } });
+      $('signin').href = APP_URL; $('again').onclick = load;
+      document.body.classList.add('framed'); load();
     } else if (ios) $('ios').classList.remove('hide');
   }
   let deferred = null;   // Android / desktop Chrome: the browser's own install prompt
