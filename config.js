@@ -1,2 +1,2 @@
 // Supplybot's address (Supplybot → ⚙ → 📲 Install on your phone → Copy). Paste it between the quotes.
-window.SUPPLYBOT_URL = 'https://script.google.com/a/macros/envirosparkenergy.com/s/AKfycbyLRgfj4tANNQOsYYgqepJg9hW0TF7hUN5R-_nSBDuVSmYvGfY1aLqsBUWRoqhLg093/exec';
+window.SUPPLYBOT_URL = 'https://script.google.com/a/macros/envirosparkenergy.com/s/AKfycbxQsnS1uyqIhyrJCbV9NYUAPQVJjWMqLsLu3s6dzYtgkgnpWS1Z7vpVNiy3RtuyJBbL/exec';
