@@ -848,8 +848,10 @@ const PAGE_PARTS_ = ['Styles', 'Styles2', 'Script', 'Script2', 'Script3'];
 const OPTIONAL_PARTS_ = ['Styles2', 'Script2', 'Script3'];
 function includeFile(name) {
   if (PAGE_PARTS_.indexOf(name) < 0) throw new Error('Not a page part: ' + name);
-  try { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
-  catch (e) { if (OPTIONAL_PARTS_.indexOf(name) >= 0) return ''; throw e; }
+  // The Script parts are plain code (no <script> tags of their own), so they're read as raw text: reading them as a page
+  // would make Apps Script check them as HTML and refuse ("Malformed HTML content"). Styles is a normal page part.
+  try { return /^Script/.test(name) ? HtmlService.createTemplateFromFile(name).getRawContent() : HtmlService.createHtmlOutputFromFile(name).getContent(); }
+  catch (e) { if (OPTIONAL_PARTS_.indexOf(name) >= 0 && /not found|No HTML file/i.test(String(e && e.message))) return ''; throw e; }
 }
 
 // ---------- Favicon (browser-tab icon) ----------
