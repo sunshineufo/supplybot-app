@@ -4669,7 +4669,8 @@
     box-shadow: 0 10px 24px -6px rgba(0,0,0,.45), 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent); transition: transform .18s ease; }
   .qfab.open .qfab-b { transform: rotate(45deg); }
   .qfab-m { display: grid; gap: 8px; animation: suiOpen .16s ease-out; }
-  .qfab-m[hidden] { display: none; }   /* only after tapping ＋ (the grid above would otherwise override hidden) */
+  .qfab-m[hidden] { display: none; }
+  .qfab[hidden] { display: none !important; }   /* ⚙ Quick-create button off (the flex above would otherwise keep it showing) */   /* only after tapping ＋ (the grid above would otherwise override hidden) */
   .qfab-m button { display: flex; align-items: center; gap: 10px; justify-content: flex-end; border: 1px solid var(--line); background: var(--card); color: var(--text); font-family: inherit; font-weight: 700; font-size: 15px; padding: 10px 16px 10px 14px; border-radius: 999px; box-shadow: 0 8px 20px -8px rgba(0,0,0,.4); cursor: pointer; }
   .qfab-m button span { font-size: 20px; }
   /* ⏱ live timer pins */
@@ -5101,4 +5102,63 @@
   .pc-qc small { font-size: 11.5px; font-weight: 500; color: var(--muted); }
   .pc-qc.on { background: var(--brand-soft); border-style: solid; }
   .pm-qc { padding: 1px 6px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: 10.5px; font-weight: 800; }
+  .qf-prof { display: flex !important; align-items: center; gap: 10px; width: 100%; margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--card) !important; color: var(--text) !important; font: inherit; text-align: left; cursor: pointer; }
+  .qf-prof > span:first-child { flex: none; font-size: 20px; }
+  .qf-prof > span:nth-child(2) { flex: 1; min-width: 0; display: grid; gap: 2px; }
+  .qf-prof b { font-size: 14px; } .qf-prof small { font-size: 11.5px; color: var(--muted); font-weight: 500; }
+  .qf-prof i { margin-left: auto; flex: none; width: 36px; height: 21px; border-radius: 999px; background: var(--line); position: relative; transition: background .15s; }
+  .qf-prof i::after { content: ''; position: absolute; top: 2.5px; left: 2.5px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+  .qf-prof.on i { background: var(--brand); } .qf-prof.on i::after { transform: translateX(15px); }
+  /* ⚙ Quick settings: third in importance (after the QR scan and ＋): see-through, small and quiet, so what's under it reads */
+  .pfree-gear { width: 28px; height: 28px; font-size: 13px; background: transparent !important; box-shadow: none !important; -webkit-backdrop-filter: none; backdrop-filter: none;
+    border: 1px solid color-mix(in srgb, var(--text) 35%, transparent) !important; color: var(--text); opacity: .7; text-shadow: 0 0 2px var(--card), 0 0 5px var(--card); }
+  .pfree-gear:hover, .pfree-gear:focus-visible { opacity: 1; }
+  .pin-gear { background: transparent !important; box-shadow: none !important; opacity: .6; text-shadow: 0 0 2px var(--card), 0 0 5px var(--card); }
+  .pin-float .pin-gear { border: 1px solid color-mix(in srgb, var(--text) 30%, transparent); }
+  .chip.chip-off { min-width: 0; padding-left: 10px; padding-right: 10px; opacity: .7; }
+  /* the ⚙ inside its see-through circle: bigger and easy to hit */
+  .pfree-gear { width: 34px; height: 34px; font-size: 20px !important; line-height: 1; display: grid; place-items: center; padding: 0; }
+  .pin-gear { font-size: 19px !important; }
+  /* standard emojis (a pin's own icon, or one typed from the keyboard) as big as the custom emojis on pins */
+  .pin-nat { display: inline-block; font-size: 1.4em; line-height: 1; vertical-align: middle; }
+  .pfree .pin-nat { font-size: 1.5em; }
+  .pin-float .pf-btn .pin-nat, .pin-btn .pin-nat { font-size: 1.3em; }
+  .pfs .pf-face .pin-nat { font-size: 1.35em; }
+  .pm-ic .pin-nat, .gmr-ic .pin-nat, .qf-face .pin-nat, .pc-face .pin-nat { font-size: 1.15em; }
+  /* 🖼 note wallpapers */
+  .mn-wp-up { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px dashed color-mix(in srgb, currentColor 45%, transparent); font-size: 12.5px; font-weight: 700; cursor: pointer; }
+  .mn-wp-up input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .mn-wp-x { width: 30px; height: 30px; padding: 0; border-radius: 50%; border: 1px solid rgba(0,0,0,.2); background: rgba(255,255,255,.7); color: #1f2937; cursor: pointer; }
+  :is(.mn-ed, .mn-card, .nb-card).nwp { color: #1f2937 !important; background-attachment: local; }
+  .mn-ed.nwp .field { background: rgba(255,255,255,.8) !important; color: #1f2937 !important; }
+  .mn-ed.nwp :is(.section-title, .muted-note, .mn-status, .mn-lock) { color: #374151 !important; }
+  .mn-ed.nwp .sn-title { background: rgba(255,255,255,.75); color: #1f2937 !important; }
+  .mn-ed.nwp .sn-text { background: rgba(255,255,255,.72); color: #1f2937; }
+  .mn-ed.nwp .mn-edbar { background: rgba(255,255,255,.85); }
+  /* 📍 locations pinned in a note */
+  .mn-locbtns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mn-locbtns .btn { flex: 1 1 auto; padding: 8px 12px; font-size: 13px; }
+  .mn-row.mn-loc a { font-weight: 700; }
+  .mn-row.mn-loc { background: color-mix(in srgb, #ef4444 8%, transparent); border-radius: 10px; }
+  /* 🖼 picture emojis */
+  .cemo.pic { display: inline-grid; place-items: center; }
+  .cemo .cemo-img { width: 100%; height: 100%; object-fit: cover; border-radius: 26%; display: block; pointer-events: none; -webkit-user-drag: none; }
+  .emo-picup { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 7px 12px; border-radius: 999px; border: 1px dashed var(--brand); color: var(--brand); font-size: 12.5px; font-weight: 700; cursor: pointer; }
+  .emo-picup input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  /* 📎 PDFs & links on POs and returns */
+  .rcv-pdfbtn { display: inline-flex; align-items: center; justify-content: center; margin: 6px 0 4px; cursor: pointer; }
+  .rcv-pdf { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .rcv-pdf small { color: var(--muted); }
+  .ret-atts { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .ret-att { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 3px 4px 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; }
+  .ret-att a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; color: var(--text); text-decoration: none; font-weight: 600; }
+  .ret-att button { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); font-size: 10px; cursor: pointer; }
+  .ret-att-add { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; border: 1px dashed color-mix(in srgb, var(--brand) 55%, var(--line)); background: none; color: var(--brand); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+  .rcv-attbtns { display: flex; gap: 8px; } .rcv-attbtns .rcv-pdfbtn { flex: 1; }
+  .ret-photos { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0 2px; }
+  .ret-ph { position: relative; flex: none; }
+  .ret-ph img { display: block; width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+  .ret-ph button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; font-size: 10px; cursor: pointer; }
+  .emo-es i { display: block; width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--a) 0 55%, var(--b) 55%); box-shadow: 0 0 0 1px rgba(0,0,0,.25); margin: 0 auto 2px; }
 </style>

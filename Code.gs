@@ -78,7 +78,7 @@ const ADJ_SHEET = 'Inventory Adjustments';
 // Point of Contact (added later, so it's the last column) is who brought it back, picked from Contacts in the app.
 // Endpoints / Endpoint Serials: endpoints entered for an EVSE item while receiving it (same format as Order Lines).
 const ADJ_HEADERS = ['Timestamp', 'User', 'Type', 'Item Name', 'Part Number', 'Assigned Job', 'Change', 'Qty Before', 'Qty After',
-  'Vendor', 'PO #', 'Note', 'Item Key', 'Adjustment ID', 'Returned From', 'Order #', 'Return Reason', 'Endpoints', 'Endpoint Serials', 'Point of Contact', 'Tracker Logged'];
+  'Vendor', 'PO #', 'Note', 'Item Key', 'Adjustment ID', 'Returned From', 'Order #', 'Return Reason', 'Endpoints', 'Endpoint Serials', 'Point of Contact', 'Tracker Logged', 'PM', 'Links', 'PDFs'];
 const LOG_HEADERS = ['Timestamp', 'User', 'Action', 'Row', 'Item Name', 'Part Number', 'Assigned Job', 'Change', 'New Qty', 'Note'];
 
 // App field -> header text in the master sheet (or a list of accepted names, first one preferred).
@@ -221,7 +221,7 @@ function saveResume(json) {
 // Thumbnail: a tiny copy (64 px, ~3 KB) kept right in the tab, shown next to that person's comments everywhere.
 // Prefs: that person's display settings, so they follow them to any phone or computer (see setMyPrefs).
 const PROFILES_SHEET = 'User Profiles';
-const PROFILE_HEADERS = ['Email', 'Photo File ID', 'Updated', 'Thumbnail', 'Prefs'];
+const PROFILE_HEADERS = ['Email', 'Photo File ID', 'Updated', 'Thumbnail', 'Prefs', 'Emoji Pics'];
 const MAX_THUMB_CHARS = 20000;
 const PROFILE_FOLDER = 'Profile Photos';
 const MAX_PROFILE_KB = 400;   // the phone shrinks the picture to a small square first, so it's normally ~20 KB
@@ -242,7 +242,23 @@ function getMyProfile() {
   const p = readProfiles_().find(x => x.email === me);
   let photo = '';
   if (p && p.fileId) { try { photo = dataUrl_(DriveApp.getFileById(p.fileId).getBlob()); } catch (e) { /* file deleted from Drive */ } }
-  return { email: currentUser_(), role, roleName: ROLE_NAMES[role] || '', photo, prefs: p ? p.prefs : {} };
+  return { email: currentUser_(), role, roleName: ROLE_NAMES[role] || '', photo, prefs: p ? p.prefs : {}, emojiPics: p ? emojiPicsOf_(profileEmojiPicsCell_(p.row)) : [] };
+}
+// 🖼 Picture emojis (My emoji → Upload a picture): small pictures (about 96 px), up to 8, kept in their own column of the
+// person's profile row so they're the same on every device. Index n matches the [emo:pic.n…] token in their emoji list.
+const MAX_EMOJI_PIC = 9000;
+const emojiPicsOf_ = v => { let a = []; try { a = JSON.parse(String(v || '[]')); } catch (e) { a = []; }
+  return (Array.isArray(a) ? a : []).slice(0, 8).map(x => typeof x === 'string' && x.length <= MAX_EMOJI_PIC && /^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+\/=]+$/.test(x) ? x : ''); };
+function profileEmojiPicsCell_(row) { try { return profilesSheet_().getRange(row, 6).getValue(); } catch (e) { return ''; } }
+function setMyEmojiPics(list) {
+  requireRole_('Viewer');
+  const me = currentUser_().toLowerCase(), clean = emojiPicsOf_(JSON.stringify(list || []));
+  return withLock_(() => {
+    const sheet = profilesSheet_(), p = readProfiles_().find(x => x.email === me);
+    if (p) sheet.getRange(p.row, 6).setValue(JSON.stringify(clean));
+    else sheet.appendRow([me, '', new Date(), '', '{}', JSON.stringify(clean)]);
+    return clean.length;
+  });
 }
 
 // Display settings a person can save to their profile: [name, allowed values]. itemPics / orderPics: how photos look
@@ -329,7 +345,7 @@ function removeMyPhoto() {
 // Each person only ever gets their own notes back from these functions. The rows live in a hidden "My Notes" tab;
 // attached PDFs go in a Drive folder "My Notes Files", shared only with the note's owner (not with the domain).
 const NOTES_SHEET = 'My Notes';
-const NOTES_HEADERS = ['Owner', 'ID', 'Title', 'Text', 'Links', 'Files', 'Updated', 'Created', 'Color', 'Tags', 'Media', 'Value', 'Tally'];
+const NOTES_HEADERS = ['Owner', 'ID', 'Title', 'Text', 'Links', 'Files', 'Updated', 'Created', 'Color', 'Tags', 'Media', 'Value', 'Tally', 'Wallpaper'];
 // 🧮 A note's tally: rows of { label, n, u } (u: ft in yd mi m km = distance, ea = quantity, usd = value) and du, the unit the distance total shows in
 const TALLY_UNITS = ['ft', 'in', 'yd', 'mi', 'm', 'km', 'ea', 'usd', 'time'];   // time: s / e are start and end ("HH:MM")
 function cleanTally_(t) {
@@ -394,7 +410,7 @@ function noteMentionRows_(me, since) {
 function getSharedNote(id) {
   requireRole_('Viewer');
   const n = sharedNote_(id);
-  return { id: n.id, title: n.title, text: n.text, color: n.color, links: n.links, files: n.files.map(f => ({ id: f.id, name: f.name, kb: f.kb })), media: n.media, value: n.value, tally: n.tally, owner: n.owner, updated: n.updated, mine: n.owner === currentUser_().toLowerCase() };
+  return { id: n.id, title: n.title, text: n.text, color: n.color, wp: n.wp, links: n.links, files: n.files.map(f => ({ id: f.id, name: f.name, kb: f.kb })), media: n.media, value: n.value, tally: n.tally, owner: n.owner, updated: n.updated, mine: n.owner === currentUser_().toLowerCase() };
 }
 function getSharedNoteFile(id, fileId) {
   requireRole_('Viewer');
@@ -407,7 +423,7 @@ function sharedNote_(id) {
   const r = last < 2 ? null : sh.getRange(2, 1, last - 1, NOTES_HEADERS.length).getValues().find(x => String(x[1]) === String(id));
   if (!r) throw new Error('That note was deleted.');
   const n = { owner: String(r[0]).trim().toLowerCase(), id: String(r[1]), title: String(r[2] || ''), text: String(r[3] || ''), color: String(r[8] || ''), links: jsonList_(r[4]), files: jsonList_(r[5]),
-    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]) };
+    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]), wp: String(r[13] || '') };
   if (n.owner !== me && !mentions_(n.text, me)) throw new Error('That note isn’t shared with you any more.');
   return n;
 }
@@ -434,10 +450,10 @@ function readMyNotes_(sheet) {
   if (last < 2) return [];
   return sheet.getRange(2, 1, last - 1, NOTES_HEADERS.length).getValues().map((r, i) => ({ row: i + 2, owner: String(r[0]).trim().toLowerCase(), id: String(r[1]),
     title: String(r[2] || ''), text: String(r[3] || ''), links: jsonList_(r[4]), files: jsonList_(r[5]),
-    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), created: r[7] instanceof Date ? r[7].toISOString() : String(r[7] || ''), color: String(r[8] || ''), tags: jsonList_(r[9]), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]) }))
+    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), created: r[7] instanceof Date ? r[7].toISOString() : String(r[7] || ''), color: String(r[8] || ''), tags: jsonList_(r[9]), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]), wp: String(r[13] || '') }))
     .filter(n => n.owner === me && n.id);
 }
-const noteOut_ = n => ({ id: n.id, title: n.title, text: n.text, links: n.links, files: n.files, updated: n.updated, created: n.created, color: n.color, tags: n.tags, media: n.media, value: n.value, tally: n.tally });
+const noteOut_ = n => ({ id: n.id, title: n.title, text: n.text, links: n.links, files: n.files, updated: n.updated, created: n.created, color: n.color, tags: n.tags, media: n.media, value: n.value, tally: n.tally, wp: n.wp });
 /** Your notes, newest change first. */
 function getMyNotes() {
   requireRole_('Viewer');
@@ -488,6 +504,7 @@ function deleteMyNote(id) {
     const sheet = notesSheet_(), n = readMyNotes_(sheet).find(x => x.id === String(id));
     if (n) {
       n.files.concat(n.media).forEach(f => { try { DriveApp.getFileById(f.id).setTrashed(true); } catch (e) { /* gone */ } });
+      if (n.wp) { try { DriveApp.getFileById(n.wp).setTrashed(true); } catch (e) { /* gone */ } }
       sheet.deleteRow(n.row);
       if (n.media.length) dropNotePreviews_(n.media.map(m => m.id));
     }
@@ -575,6 +592,43 @@ function getNoteMediaPreviews(id) {
   return out;
 }
 /** One photo or video from a note, as a data URL. Yours, or a note that @mentions you. */
+// 🖼 A note's own wallpaper: a picture uploaded for its background (shrunk on the phone first), kept in the private "My Notes
+// Files" folder like its photos. The owner and anyone the note @mentions see it (getNoteWallpaper checks, like shared notes).
+const MAX_NOTE_WP_KB = 900;
+function setNoteWallpaper(id, dataUrl) {
+  requireRole_('Viewer');
+  const me = currentUser_().toLowerCase();
+  let bytes = null, type = '';
+  if (dataUrl) {
+    const m = /^data:(image\/(jpeg|png|webp));base64,(.+)$/.exec(String(dataUrl));
+    if (!m) throw new Error('Wallpapers can be JPEG, PNG or WebP pictures.');
+    bytes = Utilities.base64Decode(m[3]); type = m[1];
+    if (bytes.length > MAX_NOTE_WP_KB * 1024) throw new Error('That picture is too big for a wallpaper (over ' + MAX_NOTE_WP_KB + ' KB).');
+  }
+  return withLock_(() => {
+    const sheet = notesSheet_(), n = readMyNotes_(sheet).find(x => x.id === String(id));
+    if (!n) throw new Error('Save the note first, then add a wallpaper.');
+    if (n.wp) { try { DriveApp.getFileById(n.wp).setTrashed(true); } catch (e) { /* already gone */ } }
+    let fid = '';
+    if (bytes) {
+      const it = DriveApp.getFoldersByName(NOTES_FOLDER), folder = it.hasNext() ? it.next() : DriveApp.createFolder(NOTES_FOLDER);
+      const file = folder.createFile(Utilities.newBlob(bytes, type, 'wallpaper-' + n.id));
+      file.setDescription('Private note wallpaper for ' + me + ' (Supplybot · My notes)');
+      fid = file.getId();
+    }
+    sheet.getRange(n.row, 14).setValue(fid);
+    sheet.getRange(n.row, 7).setValue(new Date());
+    return { wp: fid };
+  });
+}
+/** The wallpaper picture of a note that's yours or @mentions you: { wp, dataUrl } ('' when it has none). */
+function getNoteWallpaper(id) {
+  requireRole_('Viewer');
+  const n = sharedNote_(id);
+  if (!n.wp) return { wp: '', dataUrl: '' };
+  const blob = DriveApp.getFileById(n.wp).getBlob();
+  return { wp: n.wp, dataUrl: 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes()) };
+}
 function getNoteMediaFile(id, fileId) {
   requireRole_('Viewer');
   const n = sharedNote_(id), f = n.media.find(x => x.id === fileId);
@@ -784,14 +838,18 @@ function doGet() {
   return page;
 }
 
-// The page is split into three HTML files because Apps Script cuts off any single file at about 1 MB (the end of the app
-// code went missing, so it never started): Index (the page itself), Styles (the CSS) and Script (the app code). Index is
-// a template, and <?!= includeFile('Styles'); ?> / <?!= includeFile('Script'); ?> paste the other two in, unchanged.
-// Keep each file under about 900 KB; if one grows past that, split it again the same way.
-const PAGE_PARTS_ = ['Styles', 'Script'];
+// The page is split into several HTML files because Apps Script cuts off any single file at about 1 MB (the end of the app
+// code once went missing, so it never started): Index (the page itself), Styles (+ Styles2) for the CSS, and Script,
+// Script2 (+ Script3) for the app code. Index is a template: inside ONE <script> block it pastes Script, Script2 and
+// Script3 one after another, so the browser still sees a single script, just stored in parts. Each part stays well under
+// 1 MB (the build cuts the code into parts of about 500 KB), leaving room to grow. Script2, Script3 and Styles2 are
+// optional: a part that isn't in the project yet is simply skipped (the app's own check then says if code is missing).
+const PAGE_PARTS_ = ['Styles', 'Styles2', 'Script', 'Script2', 'Script3'];
+const OPTIONAL_PARTS_ = ['Styles2', 'Script2', 'Script3'];
 function includeFile(name) {
   if (PAGE_PARTS_.indexOf(name) < 0) throw new Error('Not a page part: ' + name);
-  return HtmlService.createHtmlOutputFromFile(name).getContent();
+  try { return HtmlService.createHtmlOutputFromFile(name).getContent(); }
+  catch (e) { if (OPTIONAL_PARTS_.indexOf(name) >= 0) return ''; throw e; }
 }
 
 // ---------- Favicon (browser-tab icon) ----------
@@ -1589,7 +1647,7 @@ function cleanAdjInfo_(info) {
   };
   return { type: clip(info.type, 40, 'Type'), vendor: clip(info.vendor, 100, 'Vendor'), po: clip(info.po, 60, 'PO #'), note: clip(info.note, 300, 'Note'),
     from: clip(info.from, 100, 'Returned from'), orderNo: clip(info.orderNo, 40, 'Order #'), reason: clip(info.reason, 60, 'Reason'),
-    contact: clip(info.contact, 100, 'Point of contact') };
+    contact: clip(info.contact, 100, 'Point of contact'), pm: clip(info.pm, 100, 'PM') };
 }
 
 /**
@@ -1674,12 +1732,12 @@ function applyStockChange_(sheet, cols, rowNum, delta, info) {
   const adjustment = {
     id: Utilities.getUuid(), timestamp: new Date().toISOString(), user: currentUser_(), type: info.type || '',
     change: delta, before: current, after: next, vendor: info.vendor || '', po: info.po || '', note: String(info.note || ''),
-    from: info.from || '', orderNo: info.orderNo || '', reason: info.reason || '', contact: info.contact || '',
+    from: info.from || '', orderNo: info.orderNo || '', reason: info.reason || '', contact: info.contact || '', pm: info.pm || '',
     endpoints: info.endpoints || [], serials: info.serials || [],
   };
   adjSheet_().appendRow([new Date(), adjustment.user, asText_(adjustment.type), asText_(item.name), asText_(item.partNumber), asText_(item.job),
     delta, current, next, asText_(adjustment.vendor), asText_(adjustment.po), asText_(adjustment.note), asText_(item.key), adjustment.id,
-    asText_(adjustment.from), asText_(adjustment.orderNo), asText_(adjustment.reason)].concat(endpointCells_(adjustment), [asText_(adjustment.contact)]));
+    asText_(adjustment.from), asText_(adjustment.orderNo), asText_(adjustment.reason)].concat(endpointCells_(adjustment), [asText_(adjustment.contact), '', asText_(adjustment.pm)]));
   const details = [info.type !== 'Quick adjust' && info.type, info.vendor && 'Vendor: ' + info.vendor, info.po && 'PO #: ' + info.po,
     info.from && 'From: ' + info.from, info.orderNo && 'Order #: ' + info.orderNo, info.reason, info.contact && 'Contact: ' + info.contact,
     (info.endpoints || []).length && 'Endpoints: ' + info.endpoints.map((p, i) => p + (info.serials[i] ? ' (S/N ' + info.serials[i] + ')' : '')).join(', '),
@@ -1699,7 +1757,7 @@ function readAdjustments_() {
     job: String(r[5]), change: Number(r[6]) || 0, before: Number(r[7]) || 0, after: Number(r[8]) || 0, vendor: String(r[9]),
     po: String(r[10]), note: String(r[11]), key: String(r[12]), id: String(r[13]),
     from: String(r[14] ?? ''), orderNo: String(r[15] ?? ''), reason: String(r[16] ?? ''),
-    ...readEndpoints_(r[17], r[18]), contact: String(r[19] ?? ''), tracker: String(r[20] ?? ''),
+    ...readEndpoints_(r[17], r[18]), contact: String(r[19] ?? ''), tracker: String(r[20] ?? ''), pm: String(r[21] ?? ''), links: jsonList_(r[22]), pdfs: jsonList_(r[23]),
   })).filter(a => a.change);
 }
 
@@ -4305,6 +4363,69 @@ function poTrackerDraft_(adjs) {
 function getReturns() { return getReceipts('return'); }
 
 /** The same for kind 'po': every purchase order received (Receive → Purchase order), one per save, with vendor and PO #. */
+// 📎 PDFs and links on a PO receipt or a return (the adjustments saved together): kept on each of its rows (Links / PDFs
+// columns, as JSON), PDFs in the Drive folder "PO & Return Documents", viewable by link inside the company like order PDFs.
+const RECEIPT_DOCS_FOLDER = 'PO & Return Documents';
+function receiptRows_(adjIds) {
+  const ids = (adjIds || []).map(String), rows = readAdjustments_().filter(a => ids.indexOf(a.id) >= 0);
+  if (!rows.length) throw new Error('That receipt was not found (it may have been changed in the sheet).');
+  return rows;
+}
+function writeReceiptCol_(rows, header, value) {
+  const sheet = adjSheet_(), col = ADJ_HEADERS.indexOf(header) + 1;
+  rows.forEach(a => sheet.getRange(a.row, col).setValue(value));
+}
+function setReceiptLinks(adjIds, links) {
+  requireRole_('Editor');
+  requireScreen_('stock');
+  const clean = cleanNoteLinks_(links);
+  return withLock_(() => { const rows = receiptRows_(adjIds); writeReceiptCol_(rows, 'Links', clean.length ? JSON.stringify(clean) : ''); return clean; });
+}
+function addReceiptPdf(adjIds, fileName, dataUrl) {
+  requireRole_('Editor');
+  requireScreen_('stock');
+  const pdf = parsePdf_(fileName, dataUrl);
+  return withLock_(() => {
+    const rows = receiptRows_(adjIds), a = rows[0];
+    const what = a.type === RECEIPT_TYPES.po ? 'PO ' + (a.po || '') + (a.vendor ? ' from ' + a.vendor : '') : 'Return' + (a.from ? ' from ' + a.from : '') + (a.orderNo ? ' (' + a.orderNo + ')' : '');
+    const file = savePdf_(RECEIPT_DOCS_FOLDER, pdf, 'Attached to ' + what + ' from Supplybot');
+    const list = (a.pdfs || []).concat([{ id: file.getId(), name: pdf.name, url: file.getUrl(), kb: Math.max(1, Math.round(pdf.bytes.length / 1024)) }]).slice(-20);
+    writeReceiptCol_(rows, 'PDFs', JSON.stringify(list));
+    return list;
+  });
+}
+/** 📷 A photo on a PO receipt or a return (shrunk on the phone first), kept with its PDFs; thumb: a tiny preview to show in the list. */
+function addReceiptPhoto(adjIds, fileName, dataUrl, thumb) {
+  requireRole_('Editor');
+  requireScreen_('stock');
+  const m = /^data:(image\/(jpeg|png|webp));base64,(.+)$/.exec(String(dataUrl || ''));
+  if (!m) throw new Error('Photos can be JPEG, PNG or WebP.');
+  const bytes = Utilities.base64Decode(m[3]);
+  if (bytes.length > 6 * 1024 * 1024) throw new Error('That photo is over 6 MB.');
+  thumb = /^data:image\/(jpeg|webp);base64,[A-Za-z0-9+\/=]+$/.test(String(thumb || '')) && String(thumb).length < 12000 ? String(thumb) : '';
+  const name = String(fileName || 'photo').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 120) || 'photo';
+  return withLock_(() => {
+    const rows = receiptRows_(adjIds), a = rows[0];
+    const it = DriveApp.getFoldersByName(RECEIPT_DOCS_FOLDER), folder = it.hasNext() ? it.next() : DriveApp.createFolder(RECEIPT_DOCS_FOLDER);
+    const file = folder.createFile(Utilities.newBlob(bytes, m[1], name));
+    file.setDescription('Photo on ' + (a.type === RECEIPT_TYPES.po ? 'PO ' + (a.po || '') : 'a return') + ' from Supplybot');
+    try { file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { /* link sharing not allowed */ }
+    const list = (a.pdfs || []).concat([{ id: file.getId(), name, url: file.getUrl(), kb: Math.max(1, Math.round(bytes.length / 1024)), kind: 'photo', thumb }]).slice(-30);
+    if (JSON.stringify(list).length > 45000) throw new Error('This receipt has too many attachments. Remove some first.');
+    writeReceiptCol_(rows, 'PDFs', JSON.stringify(list));
+    return list;
+  });
+}
+function removeReceiptPdf(adjIds, fileId) {
+  requireRole_('Editor');
+  requireScreen_('stock');
+  return withLock_(() => {
+    const rows = receiptRows_(adjIds), list = (rows[0].pdfs || []).filter(f => f.id !== fileId);
+    try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) { /* already gone */ }
+    writeReceiptCol_(rows, 'PDFs', list.length ? JSON.stringify(list) : '');
+    return list;
+  });
+}
 function getReceipts(kind) {
   requireRole_('Viewer');
   requireScreen_('stock');
@@ -4331,10 +4452,10 @@ function receiptsOf_(type, keep) {
   let cur = null, prev = null;
   readAdjustments_().forEach(a => {
     if (a.type !== type || (keep && !keep(a))) { prev = null; return; }
-    const sig = [a.user, a.from, a.orderNo, a.reason, a.contact, a.note, a.vendor, a.po].join('\u0001');
+    const sig = [a.user, a.from, a.orderNo, a.reason, a.contact, a.note, a.vendor, a.po, a.pm].join('\u0001');
     if (!(cur && prev && prev.sig === sig && prev.row === a.row - 1 && Math.abs(new Date(a.timestamp) - new Date(prev.timestamp)) < 20000)) {
       cur = { adjIds: [], timestamp: a.timestamp, user: a.user, from: a.from, orderNo: a.orderNo, reason: a.reason, contact: a.contact,
-        note: a.note, vendor: a.vendor, po: a.po, tracker: '', lines: [] };
+        note: a.note, vendor: a.vendor, po: a.po, pm: a.pm, links: a.links || [], pdfs: a.pdfs || [], tracker: '', lines: [] };
       out.push(cur);
     }
     cur.adjIds.push(a.id);
