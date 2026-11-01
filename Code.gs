@@ -129,14 +129,32 @@ const SCREENS = {
   all: 'Items', in: 'In Stock', scan: 'Scan', orders: 'Orders', reports: 'Reports', log: 'Activity',
   supply: 'Supply Chain requests', stock: 'Receive & adjust stock', contacts: 'Contacts',
 };
+const SCREEN_IDS_ = Object.keys(SCREENS);
 const MAIN_SCREENS = ['all', 'in', 'orders', 'reports', 'log'];   // the bottom tabs: at least one must stay
 function cleanHidden_(list) {
   const out = [...new Set((Array.isArray(list) ? list : String(list || '').split(',')).map(x => String(x).trim()).filter(x => SCREENS[x]))];
   if (MAIN_SCREENS.every(t => out.includes(t))) throw new Error('Leave at least one of Items, In Stock, Orders, Reports or Activity showing.');
   return out;
 }
-const ROLE_RANK = { Viewer: 1, Editor: 2, Admin: 3 };
-const ROLE_NAMES = { Admin: 'Admin', Editor: 'Editor', Viewer: 'View only' };
+const ROLE_RANK = { Viewer: 1, Editor: 2, Manager: 3, Admin: 4 };
+const ROLE_NAMES = { Admin: 'Admin', Manager: 'Manager', Editor: 'Editor', Viewer: 'View only' };
+// 🧑‍💼 Managers: everything an Editor can do, plus managing the people THEY added (as View only or Editor). They never see
+// or change anyone else on the list, can't touch an admin's (or another manager's) access, can't give anyone a screen
+// that's hidden from themselves, and see nothing admin-only (every item, unit prices, monthly counts…).
+const MANAGER_CAN_GIVE_ = ['Viewer', 'Editor'];
+const isMyUser_ = u => !!u && String(u.addedBy || '').trim().toLowerCase() === currentUser_().toLowerCase();
+/** Admins manage everyone; a manager only the View only / Editor people they added. Throws otherwise. */
+function requireCanManage_(u) {
+  if (!canManage_(u)) throw new Error(myRole_() === 'Admin' ? 'Only the app owner or the admin who added them can change another admin.' : !u || !isMyUser_(u) ? 'Managers can only change people they added.' : 'Only admins can change an admin’s or a manager’s access.');
+}
+/** 🛡 Can I change this person? The owner: anyone. An admin: anyone except another admin they didn't add.
+ *  A manager: only the View only / Editor people they added. */
+function canManage_(u) {
+  if (!u) return false;
+  if (currentUser_().toLowerCase() === ownerEmail_()) return true;
+  if (myRole_() === 'Admin') return u.role !== 'Admin' || isMyUser_(u);
+  return isMyUser_(u) && MANAGER_CAN_GIVE_.indexOf(u.role) >= 0;
+}
 
 function usersSheet_() { return tabWithHeaders_(USERS_SHEET, USER_HEADERS); }
 
@@ -156,6 +174,21 @@ function readUsers_() {
 }
 
 let roleCache_ = null, hiddenCache_ = null;   // one lookup per request
+/** 🪜 Screens trickle down: someone loses every screen hidden from them AND every screen hidden from whoever added them,
+ *  and from whoever added that person, up the chain, until it reaches an admin or the owner (who see everything).
+ *  So an admin hiding Reports from a manager hides it from everyone that manager added, straight away. */
+function effectiveHidden_(u, all) {
+  const out = new Set(u.hidden), seen = new Set([u.email]), owner = ownerEmail_();
+  let by = String(u.addedBy || '').trim().toLowerCase();
+  while (by && by !== owner && !seen.has(by)) {
+    seen.add(by);
+    const up = all.find(x => x.email === by);
+    if (!up || up.role === 'Admin') break;
+    up.hidden.forEach(h => out.add(h));
+    by = String(up.addedBy || '').trim().toLowerCase();
+  }
+  return SCREEN_IDS_.filter(h => out.has(h));
+}
 /** 'Admin' | 'Editor' | 'Viewer' for the person using the app, or '' if they're not allowed in. */
 function myRole_() {
   if (roleCache_ !== null) return roleCache_;
@@ -163,9 +196,9 @@ function myRole_() {
   let role = '';
   if (me && me === ownerEmail_()) role = 'Admin';
   else if (me && me !== 'unknown') {
-    const u = readUsers_().find(x => x.email === me);
+    const all = readUsers_(), u = all.find(x => x.email === me);
     if (u && ROLE_RANK[u.role]) role = u.role;
-    hiddenCache_ = u && role !== 'Admin' ? u.hidden : [];
+    hiddenCache_ = u && role !== 'Admin' ? effectiveHidden_(u, all) : [];
   }
   roleCache_ = role;
   return role;
@@ -365,6 +398,102 @@ function cleanTally_(t) {
   return out;
 }
 function tallyOf_(v) { try { return cleanTally_(JSON.parse(String(v || '{}'))); } catch (e) { return { rows: [], du: 'ft' }; } }
+
+// ⏱🔒 Timer lock: below Manager (Editors, View only), a ⏱ time row is filled only by ▶ Start and ■ Stop, stamped when tapped.
+// Once started it can't be restarted, removed or retimed; once stopped it's final. A mistake goes to their manager as a
+// ✋ correction request (Timer Corrections), and the manager (or an admin) makes the change. Managers and admins aren't locked.
+const TIMER_SLACK_MS_ = 15 * 60 * 1000;   // a tap is saved within seconds; this leaves room for a slow connection
+const timersLocked_ = () => (ROLE_RANK[myRole_()] || 0) < ROLE_RANK.Manager;
+function checkTimerLock_(old, neu) {
+  const ASK = ' Use ✋ Ask for a correction on the timer and your manager will fix it.';
+  const oldT = old.rows.filter(r => r.u === 'time'), newT = neu.rows.filter(r => r.u === 'time');
+  const now = Date.now(), fresh = v => Math.abs(Date.parse(v) - now) <= TIMER_SLACK_MS_;
+  oldT.filter(r => r.sd).forEach(o => {
+    const n = newT.find(r => r.sd === o.sd);
+    if (!n) throw new Error('A started timer can’t be restarted or removed.' + ASK);
+    if (n.s !== o.s) throw new Error('A started timer’s start time can’t be changed.' + ASK);
+    if (o.ed) { if (n.ed !== o.ed || n.e !== o.e) throw new Error('A stopped timer can’t be changed or started again.' + ASK); }
+    else if (n.ed && !fresh(n.ed)) throw new Error('A timer stops with ■ Stop, at the moment you tap it.' + ASK);
+    else if (!n.ed && n.e) throw new Error('A timer’s end is set with ■ Stop.' + ASK);
+  });
+  newT.forEach(n => {
+    if (n.sd && !oldT.some(o => o.sd === n.sd) && (!fresh(n.sd) || (n.ed && !fresh(n.ed)))) throw new Error('Timers start with ▶ Start, at the moment you tap it.' + ASK);
+    if (!n.sd && (n.s || n.e) && !oldT.some(o => !o.sd && o.s === n.s && o.e === n.e)) throw new Error('Times are set with ▶ Start and ■ Stop, not typed in.');
+  });
+}
+
+// ✋ Timer correction requests. The request goes to whoever added the person, if that's a manager or an admin; otherwise
+// the app owner. They see it under ⏱ Timer corrections and approve (the timer in the note changes) or decline.
+const TFIX_SHEET = 'Timer Corrections';
+const TFIX_HEADERS = ['ID', 'Requested', 'By', 'Note ID', 'Note Title', 'Timer', 'Timer Start', 'Timer End', 'Wanted Start', 'Wanted End',
+  'Wanted Start Clock', 'Wanted End Clock', 'Reason', 'To', 'Status', 'Decided', 'Decided By', 'Decision Note'];
+function tfixSheet_() { const sh = tabWithHeaders_(TFIX_SHEET, TFIX_HEADERS); try { if (!sh.isSheetHidden()) sh.hideSheet(); } catch (e) { /* stays visible */ } return sh; }
+function readTfix_() {
+  const sh = tfixSheet_(), last = sh.getLastRow(); if (last < 2) return [];
+  const iso = v => v instanceof Date ? v.toISOString() : String(v || '');
+  return sh.getRange(2, 1, last - 1, TFIX_HEADERS.length).getValues().map((r, i) => ({ row: i + 2, id: String(r[0]), requested: iso(r[1]), by: String(r[2]).toLowerCase(),
+    noteId: String(r[3]), noteTitle: String(r[4]), label: String(r[5]), sd: String(r[6]), ed: String(r[7]), wantSd: String(r[8]), wantEd: String(r[9]),
+    wantS: String(r[10]), wantE: String(r[11]), reason: String(r[12]), to: String(r[13]).toLowerCase(), status: String(r[14]), decided: iso(r[15]), decidedBy: String(r[16]), decisionNote: String(r[17]) })).filter(f => f.id);
+}
+function approverFor_(email) {
+  const all = readUsers_(), u = all.find(x => x.email === email), by = u && String(u.addedBy || '').trim().toLowerCase(), up = by && all.find(x => x.email === by);
+  return up && (up.role === 'Manager' || up.role === 'Admin') ? by : ownerEmail_();
+}
+/** ✋ Ask for a timer to be corrected. want: { sd, ed, s, e, reason } (ISO date-times, and the clock times as "HH:MM" on the asker's phone). */
+function requestTimerFix(noteId, timerStart, want) {
+  requireRole_('Viewer');
+  want = want || {};
+  const me = currentUser_().toLowerCase(), iso = v => { const d = new Date(String(v || '')); return v && !isNaN(d.getTime()) ? d.toISOString() : ''; };
+  const hm = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : '';
+  const wSd = iso(want.sd), wEd = iso(want.ed), reason = String(want.reason || '').trim().slice(0, 300);
+  if (!wSd) throw new Error('Pick the correct start.');
+  if (wEd && Date.parse(wEd) <= Date.parse(wSd)) throw new Error('The end has to be after the start.');
+  if (!reason) throw new Error('Say briefly what happened, so your manager knows.');
+  return withLock_(() => {
+    const n = readMyNotes_(notesSheet_()).find(x => x.id === String(noteId));
+    if (!n) throw new Error('That note was deleted.');
+    const r = n.tally.rows.find(x => x.u === 'time' && x.sd === iso(timerStart));
+    if (!r) throw new Error('That timer changed. Reopen the note and try again.');
+    const sh = tfixSheet_(), to = approverFor_(me);
+    readTfix_().filter(f => f.by === me && f.noteId === n.id && f.sd === r.sd && f.status === 'Pending').forEach(f => sh.getRange(f.row, 15, 1, 3).setValues([['Replaced', new Date(), me]]));
+    sh.appendRow([Utilities.getUuid(), new Date(), me, n.id, asText_(n.title || 'Untitled note'), asText_(r.label || ''), r.sd, r.ed || '', wSd, wEd, hm(want.s), hm(want.e), asText_(reason), to, 'Pending', '', '', '']);
+    sh.getRange(sh.getLastRow(), 7, 1, 6).setNumberFormat('@');
+    bumpPulse_('@{' + to + '}');
+    return getTimerFixes();
+  });
+}
+/** { mine: my requests (newest first, last 60 days), toMe: requests waiting on me (admins: every pending one), canDecide } */
+function getTimerFixes() {
+  requireRole_('Viewer');
+  const me = currentUser_().toLowerCase(), admin = myRole_() === 'Admin', mgr = !timersLocked_(), cut = Date.now() - 60 * 864e5;
+  const all = readTfix_().sort((a, b) => b.requested.localeCompare(a.requested));
+  const out = f => { const o = Object.assign({}, f); delete o.row; return o; };
+  return { mine: all.filter(f => f.by === me && Date.parse(f.requested) > cut).map(out), canDecide: mgr,
+    toMe: mgr ? all.filter(f => f.status === 'Pending' && (f.to === me || admin)).map(out) : [] };
+}
+/** Managers / admins: approve (the timer in their note is changed to what they asked for) or decline a request. */
+function decideTimerFix(id, approve, note) {
+  requireRole_('Manager');
+  const me = currentUser_().toLowerCase();
+  return withLock_(() => {
+    const f = readTfix_().find(x => x.id === String(id));
+    if (!f || f.status !== 'Pending') throw new Error('That request was already handled.');
+    if (f.to !== me && myRole_() !== 'Admin') throw new Error('That request is for ' + f.to + '.');
+    if (approve) {
+      const sh = notesSheet_(), last = sh.getLastRow(), rows = last < 2 ? [] : sh.getRange(2, 1, last - 1, NOTES_HEADERS.length).getValues();
+      const i = rows.findIndex(r => String(r[0]).trim().toLowerCase() === f.by && String(r[1]) === f.noteId);
+      if (i < 0) throw new Error('Their note was deleted, so there’s nothing to correct. Decline it instead.');
+      const t = tallyOf_(rows[i][12]), r = t.rows.find(x => x.u === 'time' && x.sd === f.sd);
+      if (!r) throw new Error('That timer was changed or removed since they asked. Decline it instead.');
+      r.sd = f.wantSd; r.s = f.wantS || r.s; if (f.wantEd) { r.ed = f.wantEd; r.e = f.wantE || r.e; } else { delete r.ed; r.e = ''; }
+      sh.getRange(i + 2, 13).setValue(JSON.stringify(cleanTally_(t)));
+    }
+    tfixSheet_().getRange(f.row, 15, 1, 4).setValues([[approve ? 'Approved' : 'Declined', new Date(), me, asText_(String(note || '').trim().slice(0, 300))]]);
+    logSheet_().appendRow([new Date(), currentUser_(), approve ? 'Timer corrected' : 'Timer correction declined', '', f.by, '', '', 0, '', (f.label || 'Timer') + ' · ' + f.noteTitle]);
+    bumpPulse_('@{' + f.by + '}');
+    return getTimerFixes();
+  });
+}
 // 📷 Photos and videos on notes: the files sit in "My Notes Files" (shared only with the note's owner); a small preview of
 // each (made on the phone) is kept in the hidden "Note Media" tab so galleries open fast without fetching the full files.
 const NOTE_MEDIA_SHEET = 'Note Media';
@@ -485,11 +614,13 @@ function saveMyNote(note) {
       n.media = n.media.slice().sort((a, b) => at(a.id) - at(b.id));
       sheet.getRange(n.row, 11).setValue(JSON.stringify(n.media));
     }
-    if (n) { sheet.getRange(n.row, 3, 1, 8).setValues([[title, text, JSON.stringify(links), JSON.stringify(n.files), now, n.created || now, color, JSON.stringify(tags)]]); sheet.getRange(n.row, 12, 1, 2).setValues([[value, JSON.stringify(cleanTally_(note.tally))]]); }
+    const tally = cleanTally_(note.tally);
+    if (timersLocked_()) checkTimerLock_(n ? n.tally : { rows: [] }, tally);
+    if (n) { sheet.getRange(n.row, 3, 1, 8).setValues([[title, text, JSON.stringify(links), JSON.stringify(n.files), now, n.created || now, color, JSON.stringify(tags)]]); sheet.getRange(n.row, 12, 1, 2).setValues([[value, JSON.stringify(tally)]]); }
     else {
       if (mine.length >= MAX_NOTES) throw new Error('You have ' + MAX_NOTES + ' notes. Delete some old ones first.');
       id = Utilities.getUuid();
-      sheet.appendRow([me, id, title, text, JSON.stringify(links), '[]', now, now, color, JSON.stringify(tags), '[]', value, JSON.stringify(cleanTally_(note.tally))]);
+      sheet.appendRow([me, id, title, text, JSON.stringify(links), '[]', now, now, color, JSON.stringify(tags), '[]', value, JSON.stringify(tally)]);
       sheet.getRange(sheet.getLastRow(), 3, 1, 2).setNumberFormat('@');
     }
     const notified = notifyNoteMentions_({ id, title, text }, me);
@@ -761,9 +892,11 @@ function getMyNoteFile(id, fileId) {
 
 /** Admins: the user list (the owner first, marked as always Admin). */
 function getUsers() {
-  requireRole_('Admin');
-  const owner = ownerEmail_();
-  return { owner, screens: SCREENS, users: readUsers_().filter(u => u.email !== owner).map(u => ({ email: u.email, role: u.role, note: u.note, added: u.added, addedBy: u.addedBy, hidden: u.hidden })) };
+  requireRole_('Manager');
+  const owner = ownerEmail_(), admin = myRole_() === 'Admin', all = readUsers_();
+  return { owner: admin ? owner : '', manager: !admin, give: admin ? Object.keys(ROLE_RANK) : MANAGER_CAN_GIVE_, myHidden: admin ? [] : myHiddenScreens_(),
+    screens: SCREENS, users: all.filter(u => u.email !== owner && (admin || isMyUser_(u))).map(u => ({ email: u.email, role: u.role, note: u.note, added: u.added, addedBy: u.addedBy, hidden: u.hidden,
+      inherited: u.role === 'Admin' ? [] : effectiveHidden_(u, all).filter(h => u.hidden.indexOf(h) < 0), locked: !canManage_(u) })) };
 }
 
 /** Everyone who can use the app (for @mentions in comments): email and the users list's Name / Note. */
@@ -777,16 +910,19 @@ function getPeople() {
 
 /** Admins: add someone, or change their role / note, and (when given) which screens are hidden from them. */
 function saveUser(email, role, note, hidden) {
-  requireRole_('Admin');
+  requireRole_('Manager');
   email = String(email || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email address.');
-  if (!ROLE_RANK[role]) throw new Error('Choose a role: Admin, Editor or View only.');
+  if (!ROLE_RANK[role]) throw new Error('Choose a role: Admin, Manager, Editor or View only.');
+  if (myRole_() !== 'Admin' && MANAGER_CAN_GIVE_.indexOf(role) < 0) throw new Error('Managers can add people as View only or Editor.');
   if (email === ownerEmail_()) throw new Error("That's the app's owner, who is always an Admin.");
   if (email === currentUser_().toLowerCase() && role !== 'Admin') throw new Error("You can't lower your own role. Ask another admin.");
   return withLock_(() => {
     const sheet = usersSheet_();
     const u = readUsers_().find(x => x.email === email);
+    if (u) requireCanManage_(u);
     const hid = hidden === undefined || hidden === null ? (u ? u.hidden : []) : cleanHidden_(hidden);
+    // (a manager can't give a screen they don't have: screens hidden from them are hidden from their people too, live — effectiveHidden_)
     if (u) sheet.getRange(u.row, 2, 1, 2).setValues([[role, asText_(String(note || '').trim())]]);
     else sheet.appendRow([email, role, asText_(String(note || '').trim()), new Date(), currentUser_(), '']);
     const row = u ? u.row : sheet.getLastRow();
@@ -800,12 +936,13 @@ function saveUser(email, role, note, hidden) {
 
 /** Admins: remove someone's access. */
 function removeUser(email) {
-  requireRole_('Admin');
+  requireRole_('Manager');
   email = String(email || '').trim().toLowerCase();
   if (email === currentUser_().toLowerCase()) throw new Error("You can't remove yourself. Ask another admin.");
   return withLock_(() => {
     const u = readUsers_().find(x => x.email === email);
     if (!u) throw new Error('That person was already removed.');
+    requireCanManage_(u);
     usersSheet_().deleteRow(u.row);
     logSheet_().appendRow([new Date(), currentUser_(), 'User removed', '', email, '', '', 0, '', '']);
     return getUsers();
@@ -1441,6 +1578,8 @@ function setColorLabels(labels, hidden, monthly) {
 const MONTH_COL_RE = /^(\d{2})\.(\d{2})\.(\d{2})\s*\/\s*Starting Qty$/i;
 const MONTHLY_TRIGGER_FN = 'monthlyCountsTick';
 
+/** The owner and admins see every item; everyone else only the green-labelled ones. */
+function seesAllItems_() { return myRole_() === 'Admin' || currentUser_().toLowerCase() === ownerEmail_(); }
 /** Is this a green (any shade, not grey)? Same idea as the app's colour names. */
 function isGreen_(hex) {
   const n = parseInt(String(hex).slice(1), 16), r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
@@ -1617,9 +1756,11 @@ function getItems() {
   const all = readRows_(sheet, 2, last - 1);
   // The Available Today cell's fill colour in the sheet (e.g. green), so the app can show just one colour's rows
   const fills = sheet.getRange(2, cols.quantity + 1, last - 1, 1).getBackgrounds();
+  // Only the owner and admins see every item; everyone else sees just the rows whose Available Today cell is filled green.
+  const seeAll = seesAllItems_();
   return all.values
     .map((row, i) => Object.assign(rowToItem_(row, i + 2, cols, all.shown[i]), { qtyColor: cellFill_(fills[i][0]) }))
-    .filter(item => item.name)
+    .filter(item => item.name && (seeAll || isGreen_(item.qtyColor)))
     .map(item => Object.assign(item, { tags: (tagsByKey[item.key] || {}).tags || [], endpoints: unionTags_([epByKey[item.key], rcvEp[item.key]]), serials: unionTags_([snByKey[item.key], rcvSn[item.key]]),
       minTrack: !!(minByKey[item.key] || {}).track, minQty: (minByKey[item.key] || {}).min ?? null,
       rcvEndpoints: rcvEp[item.key] || [], rcvSerials: rcvSn[item.key] || [], commentCount: counts[item.key] || 0, documentCount: (docsByKey[item.key] || []).length, documents: docsByKey[item.key] || [] }));

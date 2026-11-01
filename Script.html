@@ -45,8 +45,9 @@
   const codeNorm = s => { const c = norm(s).replace(/[\s-]/g, ''); return /^\d+$/.test(c) ? c.replace(/^0+(?=\d)/, '') : c; };
   const realPart = p => { const c = codeNorm(p); return c && c !== 'n/a' && c !== 'na' ? c : ''; };
   let me = null;
-  const canEdit = () => !!me && (me.role === 'Admin' || me.role === 'Editor');
+  const canEdit = () => !!me && (me.role === 'Admin' || me.role === 'Manager' || me.role === 'Editor');
   const isAdmin = () => !!me && me.role === 'Admin';
+  const canManageUsers = () => !!me && (me.role === 'Admin' || me.role === 'Manager');
   let orderLock = '', orderLockNext = '';
   const orderMine = o => { const own = String(o && o.createdBy || '').trim().toLowerCase(); return !own || own === String(me && me.email || '').toLowerCase(); };
   const cantChange = () => !canEdit() || !!orderLock;
@@ -1086,6 +1087,7 @@
       pulseFails = 0;
       const sig = p ? p.all + '|' + p.me : '';
       if (pulseLast !== null && sig !== pulseLast) loadNotifications();
+      if (pulseLast === null || sig !== pulseLast) loadTfix();
       pulseLast = sig;
     }).catch(() => { pulseFails++; }).then(() => { pulseBusy = false; });
   }
@@ -2153,6 +2155,11 @@
         <div class="cd-lines">${shown.map(l => `<div><span>${esc(l.name)}</span><b>×${l.qty}</b></div>`).join('')}${lines.length > shown.length ? `<div class="cd-more">+${lines.length - shown.length} more item${lines.length - shown.length === 1 ? '' : 's'}</div>` : ''}${lines.length ? '' : '<div class="cd-more">No items yet</div>'}</div>
         <div class="cd-tot"><div><span>Items</span><b>${money(our)}</b></div>${extra ? `<div><span>Additional</span><b>${money(extra)}</b></div>` : ''}${ship ? `<div><span>Shipping</span><b>${money(ship)}</b></div>` : ''}<div class="cd-grand"><span>Total</span><b>${money(our + extra + ship)}</b></div></div>`;
     }
+    if (kind === 'contact') {
+      const c = contacts.find(x => x.id === ref); if (!c) return contactsLoaded ? '' : '<div class="cd-sub">Loading the contact…</div>';
+      const rows = [['Company', c.name ? c.company : ''], ['Type', c.type], ['Title', c.title], ['Phone', c.phone], ['Email', c.email]].filter(x => x[1]);
+      return rows.length ? `<div class="cd-tot cd-wrap">${rows.map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join('')}</div>` : '';
+    }
     if (kind === 'item') {
       const it = items.find(x => x.key === ref); if (!it) return '';
       return `<div class="cd-tot"><div><span>Available</span><b>${it.quantity}</b></div>${it.location ? `<div><span>Location</span><b>${esc(it.location)}${it.shelf ? ' · ' + esc(it.shelf) : ''}</b></div>` : ''}${it.cost != null ? `<div><span>Cost</span><b>${money(it.cost)}</b></div>` : ''}${it.extended != null ? `<div class="cd-grand"><span>Value</span><b>${money(it.extended)}</b></div>` : ''}</div>`;
@@ -2166,6 +2173,38 @@
     const demo = document.querySelector('#pinBar .pin-btn, .pf-btn, .pfree'); if (demo) { comicShow(demo); clearTimeout(comicOff); comicOff = setTimeout(comicHide, 1600); }
   }
   function comicHide() { if (comicEl) comicEl.classList.remove('show'); }
+  const pinLowItem = i => !!i && lowGreen(i);
+  let lowPinKeys = [], lowPinRaf = 0, lowPinScan = 0;
+  function lowPinCheck() {
+    const keys = pinsHidden() ? [] : pins.filter(p => p.t === 'item' && !inQc(p) && pinLowItem(items.find(x => x.key === p.ref))).map(p => p.ref);
+    if (keys.join('|') !== lowPinKeys.join('|')) { lowPinKeys = keys; lowPinPaint(); }
+    if (keys.length && !lowPinRaf) lowPinRaf = requestAnimationFrame(lowPinFollow);
+  }
+  function lowPinPaint() {
+    let box = $('lowPins');
+    if (!lowPinKeys.length) { if (box) box.remove(); return; }
+    if (!box) { box = document.createElement('div'); box.id = 'lowPins'; box.className = 'low-pins'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
+    if (!$('font-comic')) { const l = document.createElement('link'); l.id = 'font-comic'; l.rel = 'stylesheet'; l.href = 'https:' + '\x2F\x2F' + 'fonts.googleapis.com/css2?family=Bangers&display=swap'; document.head.appendChild(l); }
+    box.innerHTML = lowPinKeys.map(k => { const it = items.find(x => x.key === k), p = pins.find(x => x.t === 'item' && x.ref === k), a = afterShip(it);
+      return `<div class="low-bub" data-k="${esc(k)}" role="status"><b>${esc(p ? p.label : it.name)}</b><small>${a < 0 ? `Short ${-a} after drafts ship` : `${a} left after drafts ship · min ${it.minQty}`}</small></div>`; }).join('');
+  }
+  function lowPinFollow() {
+    lowPinRaf = 0;
+    const box = $('lowPins'); if (!box || !lowPinKeys.length) return;
+    box.querySelectorAll('.low-bub').forEach(b => {
+      const pin = [...document.querySelectorAll(`[data-pk="item|${CSS.escape(b.dataset.k)}"]`)].find(e => e.offsetParent || e.getClientRects().length);
+      const r = pin && pin.getBoundingClientRect();
+      if (!r || !r.width) { b.classList.remove('on'); return; }
+      const w = b.offsetWidth, h = b.offsetHeight, below = r.top < h + 24;
+      const left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+      b.style.transform = `translate(${Math.round(left)}px, ${Math.round(below ? r.bottom + 10 : r.top - h - 10)}px)`;
+      b.style.setProperty('--tail', Math.max(14, Math.min(w - 14, r.left + r.width / 2 - left)) + 'px');
+      b.classList.toggle('below', below); b.classList.add('on');
+    });
+    if (!document.hidden) lowPinRaf = requestAnimationFrame(lowPinFollow);
+  }
+  setInterval(() => { if (me && items.length) lowPinCheck(); }, 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && lowPinKeys.length && !lowPinRaf) lowPinRaf = requestAnimationFrame(lowPinFollow); });
   document.addEventListener('pointerover', e => { if (e.pointerType === 'touch' || performance.now() - epicScrollAt < 300) return; const t = e.target.closest && e.target.closest('[data-comic]'); if (t) comicShow(t); }, { passive: true });
   document.addEventListener('pointerout', e => { const t = e.target.closest && e.target.closest('[data-comic]'); if (t && !(e.relatedTarget && t.contains(e.relatedTarget))) { clearTimeout(comicOff); comicOff = setTimeout(comicHide, 120); } }, { passive: true });
   addEventListener('scroll', () => { if (comicEl && comicEl.classList.contains('show')) comicHide(); }, { passive: true, capture: true });
@@ -6509,62 +6548,4 @@
       if ($('sheet').dataset.order === no && $('addrBox')) $('addrBox').innerHTML = addressHtml(orders[i]);
       render(); toast(v ? 'Address saved' : 'Address removed');
     } catch (e) { if ($('addrSave')) $('addrSave').disabled = false; fail(e); }
-  }
-  function cleanUrl(v) {
-    v = String(v || '').trim();
-    if (!v) return '';
-    if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = 'https:\/\/' + v;
-    return /^https?:\/\/\S+$/i.test(v) ? v : null;
-  }
-  const LINK_LABELS = ['Tracking', 'Freight quote', 'Bill of lading', 'Proof of delivery', 'Customer portal', 'Invoice'];
-  let linkEditing = null;
-  function orderLinksOf(o) {
-    const list = [];
-    if (o && o.trackingUrl) list.push({ id: 'tracking', label: 'Tracking', url: o.trackingUrl, legacy: true });
-    return list.concat((o && o.links) || []);
-  }
-  function scopeLinks(scope) {
-    const no = scopeOrderNo(scope);
-    return no ? orderLinksOf(orderByNo(no)) : (od ? od.pendingLinks : []);
-  }
-  function linksTitle(scope) { const n = scopeLinks(scope).length; return 'Links' + (n ? ' · ' + n : ''); }
-  function replaceOrder(saved) {
-    const i = orders.findIndex(o => o.orderNo === saved.orderNo);
-    if (i >= 0) orders[i] = Object.assign(orders[i], saved); else orders.unshift(saved);
-    if (od && od.orderNo === saved.orderNo) od.trackingUrl = saved.trackingUrl || '';
-    return orders[i >= 0 ? i : 0];
-  }
-  function linkFormHtml(scope, k) {
-    return `<div class="lform">
-        <label>Label (optional)</label>
-        <input class="field" id="linkLabel" list="linkLabels" autocomplete="off" placeholder="e.g. UPS tracking, Freight quote" value="${esc(k ? k.label : '')}" ${k && k.legacy ? 'disabled' : ''}>
-        <datalist id="linkLabels">${LINK_LABELS.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
-        <label>Web address</label>
-        <input class="field" id="linkUrl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" placeholder="https:\/\/…" value="${esc(k ? k.url : '')}">
-        <div class="actions"><button class="btn ghost" onclick="linkEditing=null; showLinks('${esc(scope)}')">Cancel</button>
-          <button class="btn primary" id="linkSave" onclick="saveLink('${esc(scope)}')">${k ? 'Save' : 'Add link'}</button></div>
-      </div>`;
-  }
-  function linksHtml(scope) {
-    const no = scopeOrderNo(scope);
-    const list = scopeLinks(scope);
-    const arrows = (k, i) => list.length < 2 ? '' : `<span class="lmove">
-        <button onclick="moveLink('${esc(scope)}', ${i}, -1)" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
-        <button onclick="moveLink('${esc(scope)}', ${i}, 1)" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></span>`;
-    const row = (k, i) => {
-      if (linkEditing === k.id) return linkFormHtml(scope, k);
-      const url = cleanUrl(k.url);
-      let host = k.url;
-      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch (e) {  }
-      return `<div class="lrow">
-          ${arrows(k, i)}
-          <a ${url ? `href="${esc(url)}" target="_blank" rel="noopener noreferrer"` : ''}>
-            <div class="lab">🔗 ${esc(k.label || host)} ↗</div><div class="host">${esc(host)}${!no ? ' · <span class="pend">saved with the draft</span>' : ''}</div></a>
-          ${url ? pinMiniBtn(linkPin(url, k.label || host, no ? no + ((orderByNo(no) || {}).projectName ? ' · ' + orderByNo(no).projectName : '') : '')) : ''}
-          <button onclick="linkEditing='${esc(k.id)}'; showLinks('${esc(scope)}')" aria-label="Edit link">✎</button>
-          <button onclick="removeLink('${esc(scope)}', '${esc(k.id)}')" aria-label="Remove link">✕</button>
-        </div>`;
-    };
-    return list.map(row).join('') +
-      (linkEditing === 'new' ? linkFormHtml(scope, null) : `<button class="attach-btn" onclick="linkEditing='new'; showLinks('${esc(scope)}')">🔗 Add link</button>`);
   }

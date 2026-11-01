@@ -1,3 +1,61 @@
+  function cleanUrl(v) {
+    v = String(v || '').trim();
+    if (!v) return '';
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(v)) v = 'https:\/\/' + v;
+    return /^https?:\/\/\S+$/i.test(v) ? v : null;
+  }
+  const LINK_LABELS = ['Tracking', 'Freight quote', 'Bill of lading', 'Proof of delivery', 'Customer portal', 'Invoice'];
+  let linkEditing = null;
+  function orderLinksOf(o) {
+    const list = [];
+    if (o && o.trackingUrl) list.push({ id: 'tracking', label: 'Tracking', url: o.trackingUrl, legacy: true });
+    return list.concat((o && o.links) || []);
+  }
+  function scopeLinks(scope) {
+    const no = scopeOrderNo(scope);
+    return no ? orderLinksOf(orderByNo(no)) : (od ? od.pendingLinks : []);
+  }
+  function linksTitle(scope) { const n = scopeLinks(scope).length; return 'Links' + (n ? ' · ' + n : ''); }
+  function replaceOrder(saved) {
+    const i = orders.findIndex(o => o.orderNo === saved.orderNo);
+    if (i >= 0) orders[i] = Object.assign(orders[i], saved); else orders.unshift(saved);
+    if (od && od.orderNo === saved.orderNo) od.trackingUrl = saved.trackingUrl || '';
+    return orders[i >= 0 ? i : 0];
+  }
+  function linkFormHtml(scope, k) {
+    return `<div class="lform">
+        <label>Label (optional)</label>
+        <input class="field" id="linkLabel" list="linkLabels" autocomplete="off" placeholder="e.g. UPS tracking, Freight quote" value="${esc(k ? k.label : '')}" ${k && k.legacy ? 'disabled' : ''}>
+        <datalist id="linkLabels">${LINK_LABELS.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+        <label>Web address</label>
+        <input class="field" id="linkUrl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" placeholder="https:\/\/…" value="${esc(k ? k.url : '')}">
+        <div class="actions"><button class="btn ghost" onclick="linkEditing=null; showLinks('${esc(scope)}')">Cancel</button>
+          <button class="btn primary" id="linkSave" onclick="saveLink('${esc(scope)}')">${k ? 'Save' : 'Add link'}</button></div>
+      </div>`;
+  }
+  function linksHtml(scope) {
+    const no = scopeOrderNo(scope);
+    const list = scopeLinks(scope);
+    const arrows = (k, i) => list.length < 2 ? '' : `<span class="lmove">
+        <button onclick="moveLink('${esc(scope)}', ${i}, -1)" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+        <button onclick="moveLink('${esc(scope)}', ${i}, 1)" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></span>`;
+    const row = (k, i) => {
+      if (linkEditing === k.id) return linkFormHtml(scope, k);
+      const url = cleanUrl(k.url);
+      let host = k.url;
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch (e) {  }
+      return `<div class="lrow">
+          ${arrows(k, i)}
+          <a ${url ? `href="${esc(url)}" target="_blank" rel="noopener noreferrer"` : ''}>
+            <div class="lab">🔗 ${esc(k.label || host)} ↗</div><div class="host">${esc(host)}${!no ? ' · <span class="pend">saved with the draft</span>' : ''}</div></a>
+          ${url ? pinMiniBtn(linkPin(url, k.label || host, no ? no + ((orderByNo(no) || {}).projectName ? ' · ' + orderByNo(no).projectName : '') : '')) : ''}
+          <button onclick="linkEditing='${esc(k.id)}'; showLinks('${esc(scope)}')" aria-label="Edit link">✎</button>
+          <button onclick="removeLink('${esc(scope)}', '${esc(k.id)}')" aria-label="Remove link">✕</button>
+        </div>`;
+    };
+    return list.map(row).join('') +
+      (linkEditing === 'new' ? linkFormHtml(scope, null) : `<button class="attach-btn" onclick="linkEditing='new'; showLinks('${esc(scope)}')">🔗 Add link</button>`);
+  }
   function showLinks(scope) {
     const box = $('linksBox');
     if (!box || box.dataset.scope !== scope) return;
@@ -1008,7 +1066,7 @@
     render();
   }
   function renderLog() {
-    const usersBtn = isAdmin() ? `<button class="users-btn" onclick="openUsers()"><span>👥 Users &amp; permissions<br><small>Add people and choose who can edit</small></span><span>›</span></button>` : '';
+    const usersBtn = canManageUsers() ? `<button class="users-btn" onclick="openUsers()"><span>👥 Users &amp; permissions<br><small>${isAdmin() ? 'Add people and choose who can edit' : 'The people you added: add, change or remove them'}</small></span><span>›</span></button>` : '';
     const versionNote = `<div class="muted-note" style="text-align:center;font-size:12px">App version ${esc(APP_VERSION)}</div>`;
     const adjBtn = !canSee('stock') ? '' : ['rcvpo', 'rcvret', 'scanadj', 'adjs'].map(id => { const [, ic, title, note] = PIN_TOOLS.find(t => t[0] === id), on = pinned({ t: 'tool', ref: id }) >= 0;
       return `<span class="otool-w ut-w"><button class="users-btn${id === 'adjs' ? '' : ' rcv-btn'}" onclick="openTool('${id}')"><span>${ic} ${title}<br><small>${note}</small></span><span>›</span></button><button
@@ -2404,15 +2462,93 @@
   }
   function tallyStart(i) {
     const r = tallyEnsure().rows[i]; if (!r) return; const now = new Date();
+    if (timersLocked() && r.sd) return toast('🔒 A started timer can’t be restarted. Tap ✋ Ask for a correction and your manager will fix it.', true);
     if (r.sd && !r.ed && !confirm('This timer is already running. Start it over from now?')) return;
     r.sd = now.toISOString(); r.s = tlHM(now); delete r.ed; r.e = '';
     tallySaved(); const box = $('noteTally'); if (box) box.outerHTML = tallyEditorHtml(noteEdit); noteBarTotWatch(); tlTickStart(); timerPinRefresh(); toast('▶ Timer started · ' + tlStamp(r.sd));
   }
   function tallyStop(i) {
     const r = tallyEnsure().rows[i]; if (!r) return; const now = new Date();
+    if (timersLocked() && !r.sd) return toast('Tap ▶ Start first.', true);
+    if (timersLocked() && r.ed) return toast('🔒 This timer is already stopped. Tap ✋ Ask for a correction if it’s wrong.', true);
     if (!r.sd) { r.sd = now.toISOString(); r.s = tlHM(now); }
     r.ed = now.toISOString(); r.e = tlHM(now);
     tallySaved(); const box = $('noteTally'); if (box) box.outerHTML = tallyEditorHtml(noteEdit); noteBarTotWatch(); timerPinRefresh(); const m = rowMinutes(r); toast('■ Timer stopped · ' + (m == null ? '' : fmtHM(m)));
+  }
+  const timersLocked = () => !canManageUsers();
+  let tfix = { mine: [], toMe: [], canDecide: false }, tfixOpen = -1, tfixSeen = null;
+  const tfixFor = (n, r) => (tfix.mine || []).find(f => n && f.noteId === n.id && f.sd === r.sd && f.status === 'Pending');
+  const isoLocal = v => { const d = new Date(v); if (isNaN(d)) return ''; const p = x => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+  function tfixRowHtml(n, r, i) {
+    const f = tfixFor(n, r);
+    return f ? `<small class="tl-fix pend" title="${esc(f.reason)}">⏳ Correction asked · waiting on ${esc(personName(f.to))}</small>`
+      : `<button class="tl-ask" onclick="tfixToggle(${i})" aria-expanded="${tfixOpen === i}">✋ Ask for a correction</button>`;
+  }
+  function tfixFormHtml(r, i) {
+    return `<div class="tl-fixf" id="tfixF"><b>✋ What should this timer say?</b><small>Your manager gets this and makes the change.</small>
+      <label><small>Start</small><input class="field" type="datetime-local" id="tfS" value="${esc(isoLocal(r.sd))}"></label>
+      <label><small>End${r.ed ? '' : ' (leave empty if it’s still running)'}</small><input class="field" type="datetime-local" id="tfE" value="${esc(r.ed ? isoLocal(r.ed) : '')}"></label>
+      <label><small>What happened?</small><input class="field" id="tfR" maxlength="300" placeholder="e.g. Forgot to stop it when we left the site"></label>
+      <div class="tl-fixb"><button class="btn ghost" onclick="tfixToggle(-1)">Cancel</button><button class="btn primary" id="tfGo" onclick="tfixSend(${i})">Send to my manager</button></div></div>`;
+  }
+  function tfixRedraw() { const box = $('noteTally'); if (box && noteEdit) { box.outerHTML = tallyEditorHtml(noteEdit); noteBarTotWatch(); tlTickStart(); } }
+  function tfixToggle(i) { tfixOpen = tfixOpen === i ? -1 : i; tfixRedraw(); const f = $('tfixF'); if (f) f.scrollIntoView({ block: 'nearest' }); }
+  async function tfixSend(i) {
+    const r = tallyEnsure().rows[i]; if (!r || !r.sd) return;
+    const sv = $('tfS').value, ev = $('tfE').value, why = $('tfR').value.trim();
+    if (!sv) return toast('Pick the correct start.', true);
+    if (!why) return toast('Say briefly what happened.', true);
+    const sd = new Date(sv), ed = ev ? new Date(ev) : null;
+    if (ed && ed <= sd) return toast('The end has to be after the start.', true);
+    $('tfGo').disabled = true;
+    try {
+      if (noteDirty) { saveMyNoteNow(); await noteSaving; }
+      if (!noteEdit.id) throw new Error('Wait a moment for the note to save, then try again.');
+      tfix = await api('requestTimerFix', noteEdit.id, r.sd, { sd: sd.toISOString(), ed: ed ? ed.toISOString() : '', s: tlHM(sd), e: ed ? tlHM(ed) : '', reason: why });
+      tfixOpen = -1; tfixRedraw(); tfixPill(); toast('✋ Sent. Your manager will fix it.');
+    } catch (e) { fail(e); if ($('tfGo')) $('tfGo').disabled = false; }
+  }
+  async function loadTfix() {
+    if (!me || !me.role) return;
+    try {
+      tfix = await quietApi('getTimerFixes') || tfix;
+      const key = emoKey('tfixSeen'); if (tfixSeen === null) { try { tfixSeen = JSON.parse(localStorage.getItem(key)) || {}; } catch (e) { tfixSeen = {}; } }
+      const done = (tfix.mine || []).filter(f => (f.status === 'Approved' || f.status === 'Declined') && !tfixSeen[f.id]);
+      if (done.length) {
+        done.forEach(f => tfixSeen[f.id] = 1); try { localStorage.setItem(key, JSON.stringify(tfixSeen)); } catch (e) {  }
+        const ok = done.filter(f => f.status === 'Approved');
+        toast(ok.length ? `✅ ${personName(ok[0].decidedBy)} corrected your timer${ok.length > 1 ? 's' : ''}` : `✋ ${personName(done[0].decidedBy)} declined your timer correction${done[0].decisionNote ? ': ' + done[0].decisionNote : ''}`);
+        if (ok.length) { const got = await quietApi('getMyNotes'); if (got && got.notes) { gotMyNotes(got.notes);
+          if (noteEdit && noteEdit.id && ok.some(f => f.noteId === noteEdit.id)) { const fresh = got.notes.find(x => x.id === noteEdit.id); if (fresh) { noteEdit.tally = fresh.tally; tfixRedraw(); } } } }
+      }
+      tfixPill(); if ($('sheet').dataset.panel === 'tfix') renderTfix(); else if ($('noteTally')) tfixRedraw();
+    } catch (e) {  }
+  }
+  function tfixPill() {
+    let b = $('tfixPill'); const n = (tfix.toMe || []).length;
+    if (!n || !tfix.canDecide) { if (b) b.remove(); return; }
+    if (!b) { b = document.createElement('button'); b.id = 'tfixPill'; b.className = 'tfix-pill'; b.onclick = openTfix; document.body.appendChild(b); }
+    b.innerHTML = `⏱ <b>${n}</b> timer correction${n === 1 ? '' : 's'} to review`;
+  }
+  function openTfix() { openSheet('<h2>⏱ Timer corrections</h2><div class="loading">Loading…</div>'); $('sheet').dataset.panel = 'tfix'; renderTfix(); }
+  function renderTfix() {
+    const span = (a, b) => { const m = a && b ? (Date.parse(b) - Date.parse(a)) / 60000 : null; return `${esc(tlStamp(a))}${b ? ' → ' + esc(new Date(b).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) : ' → still running'}${m != null && m >= 0 ? ` <b>${fmtHM(m)}</b>` : ''}`; };
+    const list = tfix.toMe || [];
+    $('sheet').innerHTML = `<div class="grab"></div><h2>⏱ Timer corrections</h2>
+      <div class="roles-help">People you added can only ▶ start and ■ stop timers. When one was wrong, they ask you here. Approve and the timer in their note changes to what they asked for.</div>
+      ${list.length ? list.map(f => `<div class="tfix-card"><div class="tfix-h"><b>${esc(personName(f.by))}</b><small>${esc(when(f.requested))}</small></div>
+        <div class="tfix-n">📝 ${esc(f.noteTitle)}${f.label ? ' · ⏱ ' + esc(f.label) : ''}</div>
+        <div class="tfix-r now"><span>Now</span><div>${span(f.sd, f.ed)}</div></div>
+        <div class="tfix-r want"><span>Should be</span><div>${span(f.wantSd, f.wantEd)}</div></div>
+        <div class="tfix-why">“${esc(f.reason)}”</div>
+        <div class="tfix-b"><button class="btn ghost" onclick="tfixDecide('${esc(f.id)}', false)">Decline</button><button class="btn primary" onclick="tfixDecide('${esc(f.id)}', true)">✓ Approve</button></div></div>`).join('')
+        : '<div class="muted-note">Nothing waiting. 🎉</div>'}
+      <div class="actions"><button class="btn ghost" onclick="closeSheet()">Close</button></div>`;
+  }
+  async function tfixDecide(id, ok) {
+    const why = ok ? '' : prompt('Why not? (optional, they’ll see it)') ;
+    if (!ok && why === null) return;
+    try { tfix = await api('decideTimerFix', id, ok, why || ''); renderTfix(); tfixPill(); toast(ok ? '✅ Timer corrected' : 'Declined'); } catch (e) { fail(e); }
   }
   const fmtHM = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? `${h}h${r ? ' ' + r + 'm' : ''}` : `${r}m`; };
   const fmtClock = v => { const m = tmin(v); if (m == null) return ''; const h = Math.floor(m / 60), mm = String(m % 60).padStart(2, '0'); return `${(h % 12) || 12}:${mm} ${h < 12 ? 'AM' : 'PM'}`; };
@@ -2452,15 +2588,17 @@
     const opt = (r, u) => `<option value="${u}" ${r.u === u ? 'selected' : ''}>${TALLY_U[u][1]}</option>`;
     return `<div class="tl" id="noteTally">
       ${t.rows.length ? `<div class="tl-rows">${t.rows.map((r, i) => { const k = (TALLY_U[r.u] || TALLY_U.ea)[0];
-        if (k === 'time') { const m = rowMinutes(r);
+        if (k === 'time') { const m = rowMinutes(r), lk = timersLocked();
           return `<div class="tl-row k-time"><span class="tl-ic">⏱</span>
           <input class="field tl-l" placeholder="e.g. Install crew" maxlength="80" value="${esc(r.label || '')}" oninput="tallyEdit(${i}, 'label', this.value)">
-          <span class="tl-se"><label><small>Start</small><input class="field" type="time" value="${esc(r.s || '')}" onchange="tallyEdit(${i}, 's', this.value)" oninput="tallyEdit(${i}, 's', this.value)"></label>
-            <label><small>End</small><input class="field" type="time" value="${esc(r.e || '')}" onchange="tallyEdit(${i}, 'e', this.value)" oninput="tallyEdit(${i}, 'e', this.value)"></label>
+          <span class="tl-se"><label><small>Start</small><input class="field" type="time" value="${esc(r.s || '')}" ${lk ? 'disabled title="Set with ▶ Start"' : ''} onchange="tallyEdit(${i}, 's', this.value)" oninput="tallyEdit(${i}, 's', this.value)"></label>
+            <label><small>End</small><input class="field" type="time" value="${esc(r.e || '')}" ${lk ? 'disabled title="Set with ■ Stop"' : ''} onchange="tallyEdit(${i}, 'e', this.value)" oninput="tallyEdit(${i}, 'e', this.value)"></label>
             <b class="tl-dur" id="tlDur${i}" ${tlRunning(r) ? `data-run="${i}"` : ''}>${tlRunning(r) ? '⏺ ' + tlElapsed(r) : m == null ? '—' : fmtHM(m) + (!(r.sd && r.ed) && tmin(r.e) < tmin(r.s) ? ' 🌙' : '')}</b></span>
-          <span class="tl-btns"><button class="tl-go${tlRunning(r) ? ' again' : ''}" onclick="tallyStart(${i})">▶ ${r.sd ? 'Restart' : 'Start'}</button><button class="tl-stop${tlRunning(r) ? ' live' : ''}" onclick="tallyStop(${i})">■ Stop</button>
-            ${r.sd || r.ed ? `<small class="tl-st">${r.sd ? `Started ${esc(tlStamp(r.sd))}` : ''}${r.ed ? `<br>Stopped ${esc(tlStamp(r.ed))}` : tlRunning(r) ? '<br><i>Running…</i>' : ''}</small>` : ''}</span>
-          ${noteMoveBtns('tally', i, t.rows.length)}<button class="mn-x" onclick="tallyRemove(${i})" aria-label="Remove row">✕</button></div>`; }
+          <span class="tl-btns">${!lk ? `<button class="tl-go${tlRunning(r) ? ' again' : ''}" onclick="tallyStart(${i})">▶ ${r.sd ? 'Restart' : 'Start'}</button><button class="tl-stop${tlRunning(r) ? ' live' : ''}" onclick="tallyStop(${i})">■ Stop</button>`
+              : !r.sd ? `<button class="tl-go" onclick="tallyStart(${i})">▶ Start</button>` : tlRunning(r) ? `<button class="tl-stop live" onclick="tallyStop(${i})">■ Stop</button>` : '<span class="tl-final">🔒 Final</span>'}
+            ${r.sd || r.ed ? `<small class="tl-st">${r.sd ? `Started ${esc(tlStamp(r.sd))}` : ''}${r.ed ? `<br>Stopped ${esc(tlStamp(r.ed))}` : tlRunning(r) ? '<br><i>Running…</i>' : ''}</small>` : ''}
+            ${lk && r.sd ? tfixRowHtml(n, r, i) : ''}</span>
+          ${noteMoveBtns('tally', i, t.rows.length)}${lk && r.sd ? '' : `<button class="mn-x" onclick="tallyRemove(${i})" aria-label="Remove row">✕</button>`}</div>${lk && r.sd && tfixOpen === i ? tfixFormHtml(r, i) : ''}`; }
         return `<div class="tl-row k-${k}"><span class="tl-ic">${TALLY_KINDS[k][0]}</span>
           <input class="field tl-l" placeholder="${k === 'dist' ? 'e.g. Conduit run A' : k === 'qty' ? 'e.g. Bollards' : 'e.g. Trenching quote'}" maxlength="80" value="${esc(r.label || '')}" oninput="tallyEdit(${i}, 'label', this.value)">
           <input class="field tl-n" inputmode="decimal" placeholder="0" value="${r.n == null ? '' : esc(String(r.n))}" oninput="tallyEdit(${i}, 'n', this.value)">
@@ -2478,6 +2616,7 @@
   }
   function tallyEdit(i, k, v) {
     const t = tallyEnsure(), r = t.rows[i]; if (!r) return;
+    if ((k === 's' || k === 'e') && r.u === 'time' && timersLocked()) return;
     if (k === 'n') { const raw = String(v).replace(/[$,\s]/g, ''); r.n = raw === '' || !isFinite(Number(raw)) ? null : Number(raw); }
     else r[k] = v;
     if ((k === 's' || k === 'e') && (r.sd || r.ed)) {
@@ -2490,7 +2629,7 @@
     const tots = $('tallyTots'); if (tots) tots.innerHTML = tallyTotalsHtml(t, true);
     noteBarTotUpdate();
   }
-  function tallyRemove(i) { const t = tallyEnsure(); t.rows.splice(i, 1); tallySaved(); const box = $('noteTally'); if (box) box.outerHTML = tallyEditorHtml(noteEdit); noteBarTotWatch(); }
+  function tallyRemove(i) { const t = tallyEnsure(); if (timersLocked() && t.rows[i] && t.rows[i].u === 'time' && t.rows[i].sd) return toast('🔒 A started timer can’t be removed. Ask your manager.', true); t.rows.splice(i, 1); tallySaved(); const box = $('noteTally'); if (box) box.outerHTML = tallyEditorHtml(noteEdit); noteBarTotWatch(); }
   function setTallyDu(u) { const t = tallyEnsure(); t.du = u; tallySaved(); const tots = $('tallyTots'); if (tots) tots.innerHTML = tallyTotalsHtml(t, true); }
   function tallyToValue() {
     const s = tallyTotals(tallyEnsure()); noteEdit.value = Math.round(s.val * 100) / 100; tallySaved();
@@ -2978,16 +3117,17 @@
       toast('Profile photo removed');
     } catch (e) { fail(e); }
   }
-  const ROLE_LABELS = { Admin: 'Admin', Editor: 'Editor', Viewer: 'View only' };
+  const ROLE_LABELS = { Admin: 'Admin', Manager: 'Manager', Editor: 'Editor', Viewer: 'View only' };
   let usersData = null;
   async function openUsers() {
-    if (!isAdmin()) return toast('Only admins can manage users.', true);
+    if (!canManageUsers()) return toast('Only admins and managers can manage users.', true);
     openSheet('<h2>Users &amp; permissions</h2><div class="loading">Loading…</div>');
     $('sheet').dataset.panel = 'users';
     try { usersData = await api('getUsers'); renderUsers(); } catch (e) { fail(e); }
   }
   function roleSelect(id, value, onchange) {
-    return `<select ${id ? `id="${id}"` : ''} ${onchange ? `onchange="${onchange}"` : ''} aria-label="Role">${Object.keys(ROLE_LABELS).map(r =>
+    const give = (usersData && usersData.give) || Object.keys(ROLE_LABELS);
+    return `<select ${id ? `id="${id}"` : ''} ${onchange ? `onchange="${onchange}"` : ''} aria-label="Role">${Object.keys(ROLE_LABELS).filter(r => give.includes(r)).map(r =>
       `<option value="${r}" ${r === value ? 'selected' : ''}>${ROLE_LABELS[r]}</option>`).join('')}</select>`;
   }
   function renderUsers() {
@@ -2995,19 +3135,21 @@
     const mine = e => e === String(me.email).toLowerCase();
     const row = u => `<div class="user">
         <div class="who"><b>${esc(u.email)}</b><small>${esc([u.note, u.addedBy && 'added by ' + personName(u.addedBy)].filter(Boolean).join(' · '))}</small></div>
-        ${mine(u.email) ? `<span class="fixed">${ROLE_LABELS[u.role] || u.role} (you)</span>`
+        ${mine(u.email) ? `<span class="fixed">${ROLE_LABELS[u.role] || u.role} (you)</span>` : u.locked ? `<span class="fixed" title="Only the app owner or the admin who added them can change them">🔒 ${ROLE_LABELS[u.role] || u.role}</span>`
           : roleSelect('', u.role, `changeRole(${esc(JSON.stringify(u.email))}, this.value, ${esc(JSON.stringify(u.note))})`) +
             `<button class="rm" onclick="removeUserAccess(${esc(JSON.stringify(u.email))})" aria-label="Remove ${esc(u.email)}">✕</button>`}
         ${userScreensHtml(u)}
       </div>`;
     $('sheet').innerHTML = `<div class="grab"></div><h2>Users &amp; permissions</h2>
-      <div class="roles-help">Only people on this list can open the app.<br>
+      <div class="roles-help">${usersData.manager ? `You're a <b>manager</b>: these are the people you added. Add more as View only or Editor, change them, or remove them. People others added (and every admin) aren't shown.<br>`
+        : 'Only people on this list can open the app.<br>'}
         <b>View only</b>: can look at everything but can't change anything.<br>
         <b>Editor</b>: can change items, quantities, photos, PDFs, comments and orders.<br>
-        <b>Admin</b>: everything an Editor can do, plus manage this list.<br>
-        <b>Screens</b>: tap a screen under someone's name to turn it off or on for them. Admins always see every screen.</div>
-      <div class="user"><div class="who"><b>${esc(usersData.owner)}</b><small>App owner</small></div><span class="fixed">Admin</span></div>
-      ${usersData.users.map(row).join('')}
+        <b>Manager</b>: everything an Editor can do, plus add and manage the people they added (View only or Editor). Can't see or change admins or anyone else's people, and doesn't see what only admins see.<br>
+        ${usersData.manager ? '' : '<b>Admin</b>: everything, plus manage this list. An admin can only change other admins they added themselves (🔒); the app owner can change anyone.<br>'}
+        <b>Screens</b>: tap a screen under someone's name to turn it off or on for them. Admins always see every screen. Screens trickle down: anything hidden from a manager is hidden from everyone they added too (🔒).${usersData.manager ? ' You can only give screens you have yourself.' : ''}</div>
+      ${usersData.owner ? `<div class="user"><div class="who"><b>${esc(usersData.owner)}</b><small>App owner</small></div><span class="fixed">Admin</span></div>` : ''}
+      ${usersData.users.map(row).join('') || (usersData.manager ? '<div class="muted-note">You haven’t added anyone yet.</div>' : '')}
       <div class="section-title">Add someone</div>
       <div class="add-user">
         <input id="newUserEmail" class="field" type="email" placeholder="name@envirosparkenergy.com" autocomplete="off">
@@ -3021,10 +3163,10 @@
   const SCREEN_LIST = [['all', '📦', 'Items'], ['in', '✅', 'In Stock'], ['scan', '▦', 'Scan'], ['orders', '🚚', 'Orders'], ['reports', '📊', 'Reports'],
     ['log', '🕘', 'Activity'], ['supply', '📋', 'Supply Chain requests'], ['stock', '📥', 'Receive & adjust stock'], ['contacts', '👥', 'Contacts']];
   function userScreensHtml(u) {
-    if (u.role === 'Admin') return '<div class="u-screens"><small>Sees every screen (admin)</small></div>';
-    const hidden = u.hidden || [], on = SCREEN_LIST.length - hidden.length;
+    if (u.role === 'Admin') return `<div class="u-screens"><small>Sees every screen (admin)${u.locked ? ' · only the app owner or the admin who added them can change them' : ''}</small></div>`;
+    const hidden = u.hidden || [], lock = [...new Set((u.inherited || []).concat(usersData.myHidden || []))].filter(x => !hidden.includes(x)), on = SCREEN_LIST.length - hidden.length - lock.length;
     return `<div class="u-screens"><small>Screens · ${on} of ${SCREEN_LIST.length} showing</small>
-      <div class="u-chips">${SCREEN_LIST.map(([id, ic, label]) => `<button class="${hidden.includes(id) ? 'off' : 'on'}" aria-pressed="${!hidden.includes(id)}"
+      <div class="u-chips">${SCREEN_LIST.map(([id, ic, label]) => (usersData.myHidden || []).includes(id) || (u.inherited || []).includes(id) ? `<button class="off" disabled title="${(usersData.myHidden || []).includes(id) ? 'Hidden from you too, so you can’t give it' : 'Hidden from ' + esc(personName(u.addedBy)) + ', who added them, so hidden from them too'}">🔒 ${label}</button>` : `<button class="${hidden.includes(id) ? 'off' : 'on'}" aria-pressed="${!hidden.includes(id)}"
         onclick="toggleUserScreen(${esc(JSON.stringify(u.email))}, '${id}')" title="${hidden.includes(id) ? 'Hidden from them: tap to show' : 'Showing: tap to hide'}">${ic} ${label}</button>`).join('')}</div></div>`;
   }
   async function toggleUserScreen(email, id) {
