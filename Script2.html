@@ -1,3 +1,168 @@
+  function trkSelect(list, value, onchange, label, blank) {
+    const opts = (value && !list.includes(value) ? [value] : []).concat(list);
+    return `<select class="field" aria-label="${esc(label)}" onchange="${onchange}">
+      <option value="">${esc(blank)}</option>${opts.map(p => `<option${p === value ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>`;
+  }
+  function trkHeadField(k, label) {
+    const v = trk.head[k] ?? '', set = `trk.head.${k}=this.value`;
+    if (k === 'date') return `<label>${label}<input type="date" class="field" value="${esc(v)}" onchange="trkDate(this.value)"></label>`;
+    if (k === 'audit') return `<label>${label}<input id="trkAudit" class="field" maxlength="500" value="${esc(v)}" oninput="${set}"></label>`;
+    if (k === 'activity' && trk.activities.length) return `<label>${label}${trkSelect(trk.activities, v, set, label, 'Pick one')}</label>`;
+    if (k === 'service' && trk.services.length) return `<label>${label}${trkSelect(trk.services, v, set, label, '(blank)')}</label>`;
+    return `<label>${label}<input class="field" maxlength="500" value="${esc(v)}" oninput="${set}"></label>`;
+  }
+  function trkDate(day) {
+    if (trk.head.audit === trk.autoAudit) { trk.head.audit = trk.autoAudit = trackerAudit(day); if ($('trkAudit')) $('trkAudit').value = trk.head.audit; }
+    trk.head.date = day;
+  }
+  function renderTracker() {
+    const r = trk, no = r.orderNo, ret = r.kind === 'return';
+    const what = r.isPo ? 'PO received' + (r.po ? ' · PO ' + r.po : '') + (r.vendor ? ' · from ' + r.vendor : '')
+      : ret ? 'Returned inventory' + (no ? ' · ' + no : '') + (r.head.from ? ' · from ' + r.head.from : '') : no;
+    const line = (l, i) => `<div class="trk-line">
+      <div class="trk-name">${esc(l.name)}${l.partNumber ? ` <span class="muted">${esc(l.partNumber)}</span>` : ''}</div>
+      <label class="${l.product ? '' : 'trk-need'}">Product${r.products.length
+        ? trkSelect(r.products, l.product, `trkProduct(${i}, this)`, 'Product for ' + l.name, 'No product (QB Non-inventory)')
+        : `<input class="field" maxlength="500" value="${esc(l.product)}" oninput="trk.lines[${i}].product=this.value">`}</label>
+      <div class="trk-two">
+        <label>${ret ? 'Qty' : 'Shipped Qty'}<input class="field" type="number" min="0" step="1" inputmode="numeric" value="${esc(l.qty)}" oninput="trk.lines[${i}].qty=this.value"></label>
+        <label>Original Job #<input class="field" maxlength="500" value="${esc(l.job)}" oninput="trk.lines[${i}].job=this.value"></label>
+      </div>
+      <label>Notes<input class="field" maxlength="500" value="${esc(l.notes)}" oninput="trk.lines[${i}].notes=this.value"></label>
+      <label>Network Code<input class="field" maxlength="500" value="${esc(l.network)}" oninput="trk.lines[${i}].network=this.value" placeholder="Endpoints"></label>
+    </div>`;
+    openSheet(`<h2 style="margin-bottom:2px">🧾 Log entry in tracker</h2>
+      <div class="muted-note" style="padding:0 0 6px">${esc(what)} · One row per item goes at the top of
+        <a href="${esc(r.url)}" target="_blank" rel="noopener">Supply Chain 2026 → Shipping ↗</a>. Nothing is added until you tap <b>Add to tracker</b>.</div>
+      ${r.logged ? `<div class="pm-warn">This ${r.isPo ? 'PO' : ret ? 'return' : 'order'} is already in the tracker: ${esc(trackerText(r.logged).replace(/^🧾 Logged in the tracker /, ''))}. Adding again makes a second set of rows.</div>` : ''}
+      ${trkSourceHtml()}
+      <div class="trk-head">${TRK_HEAD.map(([k, label]) => trkHeadField(k, label)).join('')}</div>
+      <h3 class="trk-h">${r.lines.length} item${r.lines.length === 1 ? '' : 's'} <span class="trk-miss" id="trkMiss">${trkMissText()}</span></h3>
+      ${r.lines.map(line).join('')}
+      <div class="sticky-foot">
+        <button class="btn ghost" onclick="${ret ? (r.past ? 'openReturns(true)' : 'showRcvDone()') : `openOrder('${esc(no)}')`}">Back</button>
+        <button class="btn primary" id="trkAdd" onclick="sendTracker()">Add to tracker</button>
+      </div>`);
+    $('sheet').dataset.panel = 'tracker';
+  }
+  let trkSrcOpen = true;
+  function copyVal(text, what) {
+    const t = String(text ?? ''); if (!t) return;
+    const done = () => toast('📋 Copied' + (what ? ' ' + what : '') + ': ' + (t.length > 40 ? t.slice(0, 40) + '…' : t));
+    const old = () => { const a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(a); a.select(); try { document.execCommand('copy'); done(); } catch (e) { toast('Couldn’t copy here. Press and hold the text to copy it.', true); } a.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, old); else old();
+  }
+  function trkSource() {
+    const r = trk, ret = r.kind === 'return', o = !ret && orderByNo(r.orderNo);
+    const src = ret ? (r.past || (rcvDone && rcvDone.done) || {}) : (o || {});
+    const day = v => v ? fmtDay(v) : '';
+    const facts = ret ? [r.isPo ? ['PO #', src.po || r.po] : ['Returned from', src.from], r.isPo ? ['Vendor', src.vendor || r.vendor] : ['Order #', src.orderNo],
+        !r.isPo && ['Vendor / company', src.vendor], ['PM', src.pm], ['Point of contact', src.contact], !r.isPo && ['Reason', src.reason], ['Note', src.note],
+        ['Received', src.timestamp ? when(src.timestamp) : ''], ['By', src.user ? personName(src.user) : '']]
+      : [['Order #', o.orderNo || r.orderNo], ['Project name', o.projectName], ['Project #', o.projectNo], ['Activity type', o.activityType], ['PM', o.pm],
+        ['Point of contact', o.contact], ['Company / vendor', o.vendor], ['Freight', o.freight], ['From', o.fromLocation], ['To', o.toLocation], ['Ship to', o.shipTo],
+        ['Order date', day(o.orderDate)], ['Ship date', day(o.shipDate)], ['Delivery date', day(o.deliveryDate)]];
+    const lines = (r.lines || []).map(l => ({ name: l.name, part: l.partNumber, qty: l.qty, job: l.job, ep: l.network }));
+    const files = ret ? (src.links || []).map(l => ['🔗 ' + (l.label || 'Link'), l.url]).concat((src.pdfs || []).map(f => [(f.kind === 'photo' ? '📷 ' : '📄 ') + f.name, f.url])) : [];
+    return { facts: facts.filter(x => x && x[1] != null && String(x[1]).trim() !== ''), lines, files };
+  }
+  function trkSourceHtml() {
+    const s = trkSource(), chip = (v, what) => `<button type="button" class="cp-chip" onclick="copyVal(${esc(JSON.stringify(String(v)))}, ${esc(JSON.stringify(what || ''))})" title="Tap to copy">${esc(v)}<i aria-hidden="true">⧉</i></button>`;
+    return `<details class="trk-src" ${trkSrcOpen ? 'open' : ''} ontoggle="trkSrcOpen = this.open">
+      <summary><b>📋 What you're logging</b><small>Tap any value to copy it</small></summary>
+      <div class="trk-src-b">
+        ${s.facts.map(([k, v]) => `<div class="cp-row"><span>${esc(k)}</span>${chip(v, k)}</div>`).join('')}
+        ${s.lines.length ? `<div class="cp-h">Items · ${s.lines.length}</div>${s.lines.map(l => `<div class="cp-item"><div class="cp-in">${chip(l.name, 'name')}</div>
+          <div class="cp-meta">${l.part ? `<span>Part #</span>${chip(l.part, 'part #')}` : ''}<span>Qty</span>${chip(l.qty, 'qty')}${l.job ? `<span>Job</span>${chip(l.job, 'job #')}` : ''}${l.ep ? `<span>Endpoints</span>${chip(l.ep, 'endpoints')}` : ''}</div></div>`).join('')}` : ''}
+        ${s.files.length ? `<div class="cp-h">Attached</div><div class="cp-files">${s.files.map(([n, u]) => `<span class="cp-file"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(n)}</a><button type="button" onclick="copyVal(${esc(JSON.stringify(u))}, 'link')" aria-label="Copy the link">⧉</button></span>`).join('')}</div>` : ''}
+        <button type="button" class="btn ghost cp-all" onclick="trkCopyAll()">📋 Copy all as text</button>
+      </div></details>`;
+  }
+  function trkCopyAll() {
+    const s = trkSource();
+    copyVal(s.facts.map(([k, v]) => k + ': ' + v).concat(s.lines.length ? ['', 'Items:'] : [], s.lines.map(l => `${l.qty} × ${l.name}${l.part ? ' (' + l.part + ')' : ''}${l.job ? ' · Job ' + l.job : ''}${l.ep ? ' · ' + l.ep : ''}`),
+      s.files.length ? ['', 'Attached:'] : [], s.files.map(([n, u]) => n.replace(/^\S+ /, '') + ' ' + u)).join('\n'), 'everything');
+  }
+  const trkMissText = () => { const n = trk.lines.filter(l => !l.product).length; return n ? '· ' + n + ' without a Product' : ''; };
+  function trkProduct(i, el) {
+    trk.lines[i].product = el.value;
+    el.closest('label').classList.toggle('trk-need', !el.value);
+    $('trkMiss').textContent = trkMissText();
+  }
+  async function sendTracker() {
+    if (viewOnly() || !trk) return;
+    const no = trk.orderNo, lines = trk.lines.filter(l => Number(l.qty) > 0);
+    if (!trk.head.date) return toast('Pick the date', true);
+    if (trk.activities.length && !trk.head.activity) return toast('Pick the activity type', true);
+    if (!lines.length) return toast('There are no items with a quantity to log', true);
+    const none = lines.filter(l => !l.product).length;
+    if (!confirm(`Add ${lines.length} row${lines.length === 1 ? '' : 's'} to the top of the Shipping tab?`
+      + (none ? `\n\n${none} item${none === 1 ? ' has' : 's have'} no Product, so QB Roll up will say QB Non-inventory.` : '')
+      + (trk.logged || (trk.kind === 'return' && !trk.past && rcvDone && rcvDone.logged)
+        ? `\n\nThis ${trk.isPo ? 'PO' : trk.kind === 'return' ? 'return' : 'order'} is already in the tracker.` : ''))) return;
+    $('trkAdd').disabled = true;
+    try {
+      if (trk.kind === 'return') {
+        const res = await api('logReturnInTracker', trk.adjIds, trk.head, lines), past = trk.past;
+        trk = null;
+        if (past) { past.tracker = res.logged; openReturns(true); }
+        else { if (rcvDone) rcvDone.logged = res.logged; showRcvDone(); }
+        return botCelebrate(`Logged in the tracker · ${res.rows} row${res.rows === 1 ? '' : 's'}`);
+      }
+      const res = await api('logOrderInTracker', no, trk.head, lines);
+      const o = orderByNo(no);
+      if (o) o.tracker = res.logged;
+      trk = null;
+      openOrder(no);
+      botCelebrate(`Logged in the tracker · ${res.rows} row${res.rows === 1 ? '' : 's'}`);
+    } catch (e) { if ($('trkAdd')) $('trkAdd').disabled = false; fail(e); }
+  }
+  function parseMoney(v) {
+    const t = String(v ?? '').trim();
+    if (!t) return null;
+    const n = Number(t.replace(/[$,\s]/g, ''));
+    return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : undefined;
+  }
+  const extraOf = o => Number(o && o.extraCost) || 0;
+  const orderTotal = o => (Number(o.ourCost) || 0) + (Number(o.shippingCost) || 0) + extraOf(o);
+  function grandTotalHtml(ourCost, ship, extras) {
+    extras = extras || [];
+    const extra = extras.reduce((n, c) => n + (Number(c.amount) || 0), 0);
+    if (!ship && !extras.length) return '';
+    return `<div class="ototals grand" style="margin-top:6px">${extras.length ? `<span>Additional <b style="font-size:15px">${money(extra)}</b></span>` : ''}
+      ${ship ? `<span>Shipping <b style="font-size:15px">${money(ship)}</b></span>` : ''}
+      <span>Total <b>${money((ourCost || 0) + (ship || 0) + extra)}</b></span></div>`;
+  }
+  function costsHtml(o) {
+    const list = o.extraCosts || [], no = esc(o.orderNo), sum = extraOf(o);
+    return (list.length ? `<div class="section-title">Additional costs · ${list.length}</div>` + list.map(c => `<div class="track xcost">
+        <span style="flex:1;min-width:0"><div class="lab">${esc(c.label)}</div><b style="font-size:17px">${money(c.amount)}</b></span>
+        ${cantChange() ? '' : `<button onclick="editCost('${no}', '${esc(c.id)}')">Edit</button>`}</div>`).join('')
+        + (list.length > 1 ? `<div class="xcost-sum"><span>Additional costs total</span><b>${money(sum)}</b></div>` : '') : '')
+      + (cantChange() ? '' : `<button class="attach-btn" onclick="editCost('${no}')">➕ Add ${list.length ? 'another' : 'an additional'} cost</button>`);
+  }
+  function editCost(no, id) {
+    if (viewOnly()) return;
+    const o = orderByNo(no), c = id ? (o.extraCosts || []).find(x => x.id === id) : null;
+    if (id && !c) return toast('That cost was removed', true);
+    const used = [...new Set(orders.flatMap(x => (x.extraCosts || []).map(k => k.label)))].sort();
+    $('costBox').innerHTML = `<div class="section-title">${c ? 'Change additional cost' : 'Add an additional cost'}</div>
+      <label>What is it for?</label>
+      <input class="field" id="costLabel" maxlength="100" list="costLabels" autocomplete="off" placeholder="e.g. Crane rental, Permit, Install labor" value="${esc(c ? c.label : '')}">
+      <datalist id="costLabels">${used.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+      <label>Amount</label>
+      <div class="track-edit">
+        <input class="field" id="costAmt" inputmode="decimal" placeholder="$0.00" value="${c ? esc(c.amount) : ''}"
+          onkeydown="if (event.key === 'Enter') saveCost('${esc(no)}', '${esc(id || '')}')">
+        <button class="btn primary" id="costSave" onclick="saveCost('${esc(no)}', '${esc(id || '')}')">Save</button>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:6px">
+        <button style="background:none;border:0;color:var(--muted);padding:6px 0" onclick="$('costBox').innerHTML = costsHtml(orderByNo('${esc(no)}'))">Cancel</button>
+        ${c ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:6px 0" onclick="removeCost('${esc(no)}', '${esc(id)}')">Remove</button>` : ''}
+      </div>`;
+    setTimeout(() => $('costLabel') && $(c ? 'costAmt' : 'costLabel').focus(), 50);
+  }
   function orderMoneySaved(no, saved) {
     const i = orders.findIndex(o => o.orderNo === no);
     if (i >= 0) orders[i] = Object.assign(orders[i], saved);
@@ -1340,8 +1505,26 @@
     try { const v = localStorage.getItem(sheetFxKey()); if (SHEET_FX.some(x => x[0] === v)) return v; } catch (e) {  }
     return 'slide';
   }
-  function applySheetFx() {
-    const v = sheetFx(), r = document.documentElement.dataset;
+  const FX_PARTS = [['all', '🌐', 'Everything'], ['items', '📦', 'Items'], ['orders', '🚚', 'Orders'], ['pins', '📌', 'From a pin'], ['notes', '📝', 'Notes'],
+    ['reports', '📊', 'Reports & catalog'], ['contacts', '👥', 'Contacts & projects'], ['stock', '📥', 'Receive, POs & returns'], ['settings', '⚙', 'Profile & settings'], ['other', '✨', 'Everything else']];
+  const fxByKey = () => 'sheetFxBy:' + String(me && me.email || '').toLowerCase();
+  function fxBy() { try { const m = JSON.parse(localStorage.getItem(fxByKey())) || {}; Object.keys(m).forEach(k => { if (!SHEET_FX.some(x => x[0] === m[k])) delete m[k]; }); return m; } catch (e) { return {}; } }
+  const fxFor = part => (part && part !== 'all' && fxBy()[part]) || sheetFx();
+  function fxPartOf(el) {
+    if (el && el.classList && el.classList.contains('cm-card')) return $('cModal') && $('cModal').dataset.project ? 'contacts' : 'contacts';
+    if (lastPinTap && lastPinTap.r && Date.now() - lastPinTap.at < 1500) return 'pins';
+    const sh = $('sheet'), pn = sh.dataset.panel || '';
+    if (sh.dataset.detail) return 'items';
+    if (sh.dataset.order || pn === 'pmnote' || pn === 'tracker' && trk && trk.kind !== 'return') return 'orders';
+    if (/^(mynotes|notes|sharednote|tfix)$/.test(pn)) return 'notes';
+    if (/^(report|rp|chart|catalog|sc)$/.test(pn) || tab === 'reports' && !pn) return 'reports';
+    if (/^(contacts)$/.test(pn)) return 'contacts';
+    if (/^(receive|rcvpick|rcvdone|returns|adjustments|tracker|countgrid|countaccess)$/.test(pn)) return 'stock';
+    if (/^(profile|users|install|labels|alltags|mycomments|askbot)$/.test(pn)) return 'settings';
+    return 'other';
+  }
+  function applySheetFx(v) {
+    v = v || sheetFx(); const r = document.documentElement.dataset;
     if (v === 'slide') delete r.sheetfx; else r.sheetfx = v;
     if (sparkleOn()) delete r.nosparkle; else r.nosparkle = '1';
   }
@@ -1414,6 +1597,12 @@
   }
   function playOpenFx(el) {
     if (!el) return;
+    const fx = fxFor(fxPartOf(el)), was = document.documentElement.dataset.sheetfx || 'slide';
+    if (fx !== was) applySheetFx(fx);
+    if (fx === 'slide') {
+      if (el.id === 'sheet') { el.classList.remove('open'); void el.offsetWidth; requestAnimationFrame(() => el.classList.add('open')); }
+      return;
+    }
     el.classList.remove('sfx-in'); void el.offsetWidth;
     if (document.documentElement.dataset.sheetfx === 'bot') botBoltLaunch(el);
     if (document.documentElement.dataset.sheetfx === 'spark') sparkPowerUp(el);
@@ -1598,6 +1787,23 @@
       wrap.appendChild(flash); wrap.appendChild(svg); document.body.appendChild(wrap);
       setTimeout(() => wrap.remove(), 1100);
     } catch (e) {  }
+  }
+  let fxPart = 'all';
+  function previewFx(v) {
+    const sh = $('sheet'); applySheetFx(v);
+    if (v === 'slide') { sh.classList.remove('open'); void sh.offsetWidth; requestAnimationFrame(() => sh.classList.add('open')); return; }
+    sh.classList.remove('sfx-in'); void sh.offsetWidth; sh.classList.add('sfx-in');
+    if (v === 'bot') botBoltLaunch(sh); if (v === 'spark') sparkPowerUp(sh); if (v === 'thunder') thunderStrike(sh);
+    if (SB_FX[v]) { try { SB_FX[v](sh); } catch (e) {  } }
+    clearTimeout(sh._sfxT); sh._sfxT = setTimeout(() => sh.classList.remove('sfx-in'), 1700);
+  }
+  function setPartFx(part, v) {
+    const m = fxBy(); if (v) m[part] = v; else delete m[part];
+    try { localStorage.setItem(fxByKey(), JSON.stringify(m)); } catch (e) {  }
+    if ($('sheet').dataset.panel === 'profile') { const top = $('sheet').scrollTop; renderProfile(); $('sheet').scrollTop = top; }
+    const label = (FX_PARTS.find(x => x[0] === part) || [])[2] || part;
+    if (v) previewFx(v);
+    toast(v ? `${label} now open with: ${SHEET_FX.find(x => x[0] === v)[2]}` : `${label} use the same opening as everything`);
   }
   function setSheetFx(v) {
     try { localStorage.setItem(sheetFxKey(), v); } catch (e) {  }
@@ -1970,7 +2176,7 @@
         <div class="fmt-label">🎞 Project names on the order cards</div>
         <div class="fmtrow"><button class="${projMarquee() ? '' : 'on'}" onclick="setProjMarquee(false)" aria-pressed="${!projMarquee()}">🅿️ Still${projMarquee() ? '' : ' ✓'}<small>The project name stays put</small></button><button class="${projMarquee() ? 'on' : ''}" onclick="setProjMarquee(true)" aria-pressed="${projMarquee()}">🎞 Moving${projMarquee() ? ' ✓' : ''}<small>Glides off to the left and comes back in from the right</small></button></div>` : ''}
         <div class="picchoices">${ITEM_PIC_STYLES.map(([id, label]) => `<button class="picchoice pv-${id} ${cur === id ? 'on' : ''}" onclick="setItemPics('${id}', '${kind}')"
-          aria-pressed="${cur === id}"><span class="pv">${id === 'grid' || id === 'gridcover' ? '<i><b></b><s></s></i><i><b></b><s></s></i>' : '<i><b></b><s></s><s></s></i><i><b></b><s></s><s></s></i>'}</span>${label}</button>`).join('')}</div>
+          aria-pressed="${cur === id}"><span class="pv">${id === 'grid' || id === 'gridcover' || id === 'textgrid' ? '<i><b></b><s></s></i><i><b></b><s></s></i>' : '<i><b></b><s></s><s></s></i><i><b></b><s></s><s></s></i>'}</span>${label}</button>`).join('')}</div>
         <div class="muted-note" style="margin-bottom:10px">${note} Also changed with 🖼 above the list. Saved to your profile.</div>`;
     const profileBlocks = {
       myact: `<div class="section-title" style="text-align:left">🔗 My activity</div><div id="myActBox">${myActHtml()}</div>`,
@@ -2004,6 +2210,7 @@
           `<button class="${pinEmoStill() === v ? 'on' : ''}" onclick="setPinEmoStill(${v})" aria-pressed="${pinEmoStill() === v}">${label}</button>`).join('')}</span></div>
         <button class="gm-tog qf-prof ${pinCapsOn() ? 'on' : ''}" role="switch" aria-checked="${pinCapsOn()}" onclick="setPinCaps(!pinCapsOn())"><span>🏷</span><span><b>Pin captions</b><small>A small name and the key fact under every pin: stock, order status and ship date, phone, timer…</small></span><i aria-hidden="true"></i></button>
         <button class="gm-tog qf-prof ${qfabOn() ? 'on' : ''}" role="switch" aria-checked="${qfabOn()}" onclick="setQfab(!qfabOn()); this.classList.toggle('on', qfabOn()); this.setAttribute('aria-checked', qfabOn())"><span>＋</span><span><b>Quick-create button</b><small>New order, note or item (and any pins you keep in it) from any screen</small></span><i aria-hidden="true"></i></button>
+        <button class="gm-tog qf-prof ${summaryOff() ? '' : 'on'}" role="switch" aria-checked="${!summaryOff()}" onclick="setSummaryOff(!summaryOff())"><span>🔢</span><span><b>Stock count bar</b><small>The slim All rows · In stock · Out bar above the item list</small></span><i aria-hidden="true"></i></button>
         ${[['items', '📍', 'Location filter row', 'The location chips on Items and In Stock'], ['orders', '🚚', 'Status filter row', 'All / Drafts / Shipped / Cancelled on Orders']].map(([k, ic, t, sub]) => `<button class="gm-tog qf-prof ${chipsOff(k) ? '' : 'on'}" role="switch" aria-checked="${!chipsOff(k)}" onclick="setChipsOff(!chipsOff('${k}'), '${k}'); this.classList.toggle('on', !chipsOff('${k}')); this.setAttribute('aria-checked', !chipsOff('${k}'))"><span>${ic}</span><span><b>${t}</b><small>${sub}</small></span><i aria-hidden="true"></i></button>`).join('')}
         ${pinsWhere() === 'bar' ? '' : pinLookHtml()}
         <div id="pinMgr">${pinMgrHtml()}</div>
@@ -2040,8 +2247,13 @@
             <span><b>${label}</b><small>${note}</small></span><span class="tick">${on ? '✓' : ''}</span></button>`; }).join('')}</div>
         <div class="muted-note" style="margin-bottom:10px">On a computer, when the mouse is over an item's photo (phones have no hover). Saved on this device. Also in 🎛 on any item.</div>`,
       opening: `<div class="section-title" style="text-align:left">🎬 Opening slide-ups</div>
-        <div class="closechoices">${SHEET_FX.map(([id, ico, label, note]) => { const on = sheetFx() === id;
-          return `<button class="closechoice ${on ? 'on' : ''}" onclick="setSheetFx('${id}')" aria-pressed="${on}"><span class="ico">${ico}</span>
+        <div class="fmt-label">Use for <small style="color:var(--muted);font-weight:500">one opening everywhere, or pick a part and give it its own</small></div>
+        <div class="fx-parts">${FX_PARTS.map(([k, ic, label]) => { const own = k !== 'all' && fxBy()[k], cur = (f => f ? f[1] + ' ' + f[2] : '')(SHEET_FX.find(x => x[0] === fxFor(k)));
+          return `<button class="${fxPart === k ? 'on' : ''}" aria-pressed="${fxPart === k}" onclick="fxPart = '${k}'; const t = $('sheet').scrollTop; renderProfile(); $('sheet').scrollTop = t"><span>${ic} ${label}</span><small>${cur}${k === 'all' ? '' : own ? ' · own' : ' · same as everything'}</small></button>`; }).join('')}</div>
+        ${fxPart !== 'all' ? `<div class="muted-note" style="padding:6px 0">${(FX_PARTS.find(x => x[0] === fxPart) || [])[1]} <b>${esc((FX_PARTS.find(x => x[0] === fxPart) || [])[2])}</b> opens with${fxBy()[fxPart] ? '' : ' the same one as everything:'} <b>${esc((SHEET_FX.find(x => x[0] === fxFor(fxPart)) || [])[2] || '')}</b>.
+          ${fxBy()[fxPart] ? `<button class="cg-x" onclick="setPartFx('${fxPart}', '')">↩ Use the same as everything</button>` : ''}</div>` : ''}
+        <div class="closechoices">${SHEET_FX.map(([id, ico, label, note]) => { const on = fxPart === 'all' ? sheetFx() === id : fxBy()[fxPart] === id;
+          return `<button class="closechoice ${on ? 'on' : ''}" onclick="${fxPart === 'all' ? `setSheetFx('${id}')` : `setPartFx('${fxPart}', '${id}')`}" aria-pressed="${on}"><span class="ico">${ico}</span>
             <span><b>${label}</b><small>${note}</small></span><span class="tick">${on ? '✓' : ''}</span></button>`; }).join('')}</div>
         <div class="fmt-label" style="margin-top:10px">↔️ Page turns <small style="color:var(--muted);font-weight:500">moving between pages in an open panel · ‹ Back goes the other way</small></div>
         <div class="fmtrow">${PAGE_FX.map(([id, ic, label, note]) => `<button class="${pageFx() === id ? 'on' : ''}" onclick="setPageFx('${id}')" aria-pressed="${pageFx() === id}">${ic} ${label}${pageFx() === id ? ' ✓' : ''}<small>${note}</small></button>`).join('')}</div>
@@ -2134,7 +2346,16 @@
     }
     noteDirty = true; saveMyNoteNow(); renderMyNotes();
   }
-  const noteWpAttr = n => n && n.wp ? ` data-wpn="${esc(n.id)}" data-wp="${esc(n.wp)}"` : '';
+  const noteWpAttr = n => n && n.wp ? ` data-wpn="${esc(n.id)}" data-wp="${esc(n.wp)}" data-wpl="${esc(n.wpl || '')}"` : '';
+  const WPL_DEF = [100, 50, 50, 58];
+  const noteWpl = v => { const a = String(v || '').split(',').map(Number); return a.length === 4 && a.every(isFinite) ? a : WPL_DEF.slice(); };
+  const wpDims = {};
+  function wpSize(el, fid, z) {
+    const d = wpDims[fid]; if (z <= 100 || !d) return 'cover';
+    const W = el.clientWidth || 1, H = Math.max(el.clientHeight, el.scrollHeight) || 1, k = Math.max(W / d[0], H / d[1]) * z / 100;
+    return Math.round(d[0] * k) + 'px ' + Math.round(d[1] * k) + 'px';
+  }
+  const wpRO = window.ResizeObserver ? new ResizeObserver(es => es.forEach(e => { const el = e.target; if (el.dataset.wpDone && noteWpl(el.dataset.wpl)[0] > 100) { delete el.dataset.wpDone; paintNoteWps(); } })) : null;
   const wpMem = {};
   function wpCacheGet(fid) { if (wpMem[fid]) return wpMem[fid]; try { const v = localStorage.getItem(emoKey('wp:' + fid)); if (v) wpMem[fid] = v; return v || ''; } catch (e) { return ''; } }
   function wpCachePut(fid, url) {
@@ -2154,10 +2375,16 @@
   }
   function paintNoteWps() {
     document.querySelectorAll('[data-wp]').forEach(el => {
-      const fid = el.dataset.wp, data = wpCacheGet(fid);
-      if (el.dataset.wpDone === fid) return;
-      if (data) { el.style.background = `linear-gradient(rgba(255,255,255,.58), rgba(255,255,255,.58)), url("${wpUrl(fid, data)}") center / cover no-repeat`;
-        el.classList.remove('nt', 'nd'); el.classList.add('nwp'); el.dataset.wpDone = fid; return; }
+      const fid = el.dataset.wp, data = wpCacheGet(fid), sig = fid + '|' + (el.dataset.wpl || '') + '|' + (wpDims[fid] ? 1 : 0);
+      if (el.dataset.wpDone === sig) return;
+      if (data) {
+        const [z, x, y, v] = noteWpl(el.dataset.wpl), url = wpUrl(fid, data), a = (v / 100).toFixed(2);
+        if (!wpDims[fid]) { const im = new Image(); im.onload = () => { wpDims[fid] = [im.naturalWidth, im.naturalHeight]; paintNoteWps(); }; im.src = url; }
+        el.style.background = `linear-gradient(rgba(255,255,255,${a}), rgba(255,255,255,${a})), url("${url}") ${x}% ${y}% / ${wpSize(el, fid, z)} no-repeat`;
+        el.style.setProperty('--wpbox', Math.min(.9, Math.max(.4, v / 100 + .16)).toFixed(2));
+        el.classList.remove('nt', 'nd'); el.classList.add('nwp'); el.dataset.wpDone = sig;
+        if (wpRO && !el._wpObs) { el._wpObs = 1; wpRO.observe(el); }
+        return; }
       if (wpLoading[fid]) return;
       wpLoading[fid] = quietApi('getNoteWallpaper', el.dataset.wpn).then(r => { if (r && r.dataUrl) { wpCachePut(fid, r.dataUrl); paintNoteWps(); } })
         .catch(() => {}).then(() => { delete wpLoading[fid]; });
@@ -2178,9 +2405,51 @@
       for (let t = 0; t < 5; t++) { url = c.toDataURL('image/webp', q); if (url.indexOf('data:image/webp') !== 0) url = c.toDataURL('image/jpeg', q); if (url.length * .75 < 850 * 1024) break; q -= .14; }
       const r = await api('setNoteWallpaper', noteEdit.id, url);
       wpCachePut(r.wp, url);
-      noteEdit.wp = r.wp; const n = (noteList || []).find(z => z.id === noteEdit.id); if (n) n.wp = r.wp;
+      noteEdit.wp = r.wp; noteEdit.wpl = ''; const n = (noteList || []).find(z => z.id === noteEdit.id); if (n) { n.wp = r.wp; n.wpl = ''; }
       renderMyNotes(); toast(`🖼 Wallpaper on · ${Math.round(url.length * .75 / 1024)} KB · anyone you @mention sees it too`);
     } catch (e) { fail(e); }
+  }
+  let wpAdjOpen = false, wpLookT = 0;
+  function noteWpAdjHtml(n) {
+    const [z, x, y, v] = noteWpl(n.wpl), data = wpCacheGet(n.wp), url = data ? wpUrl(n.wp, data) : '';
+    const sl = (k, label, min, max, val, l, r) => `<label class="wpa-sl"><span>${label} <b id="wpaV${k}">${val}${k === 'z' || k === 'v' ? '%' : ''}</b></span>
+      <input type="range" min="${min}" max="${max}" value="${val}" oninput="noteWpLook('${k}', this.value)" aria-label="${label}"><small><i>${l}</i><i>${r}</i></small></label>`;
+    return `<details class="mn-wpadj" ${wpAdjOpen ? 'open' : ''} ontoggle="wpAdjOpen = this.open"><summary>🎚 Adjust wallpaper <small>zoom, move, cover</small></summary>
+      <div class="wpa-body">
+        <div class="wpa-prev" id="wpaPrev" style="${url ? `background:linear-gradient(rgba(255,255,255,${(v / 100).toFixed(2)}),rgba(255,255,255,${(v / 100).toFixed(2)})),url('${url}') ${x}% ${y}% / ${z <= 100 ? 'cover' : z + '% auto'} no-repeat` : ''}"
+          onpointerdown="wpaDrag(event)" title="Drag to move the picture"><span>✥ drag to move</span></div>
+        ${sl('z', '🔍 Zoom', 100, 400, z, 'Fill', 'Close up')}
+        ${sl('x', '↔ Left / right', 0, 100, x, 'Left', 'Right')}
+        ${sl('y', '↕ Up / down', 0, 100, y, 'Top', 'Bottom')}
+        ${sl('v', '🌫 Cover', 0, 90, v, 'See the picture', 'Easier to read')}
+        <button class="btn ghost" style="width:100%" onclick="noteWpLook('reset')">↺ Reset</button>
+      </div></details>`;
+  }
+  function noteWpLook(k, val) {
+    if (!noteEdit || !noteEdit.wp) return;
+    const a = k === 'reset' ? WPL_DEF.slice() : noteWpl(noteEdit.wpl), i = { z: 0, x: 1, y: 2, v: 3 }[k];
+    if (i != null) a[i] = Math.round(Number(val));
+    noteEdit.wpl = a.join(','); const ln = (noteList || []).find(z => z.id === noteEdit.id); if (ln) ln.wpl = noteEdit.wpl;
+    document.querySelectorAll(`[data-wpn="${CSS.escape(noteEdit.id)}"]`).forEach(el => { el.dataset.wpl = noteEdit.wpl; delete el.dataset.wpDone; });
+    paintNoteWps();
+    const [z, x, y, v] = a, pv = $('wpaPrev');
+    if (pv) { const d = wpCacheGet(noteEdit.wp); if (d) pv.style.background = `linear-gradient(rgba(255,255,255,${(v / 100).toFixed(2)}),rgba(255,255,255,${(v / 100).toFixed(2)})),url('${wpUrl(noteEdit.wp, d)}') ${x}% ${y}% / ${z <= 100 ? 'cover' : z + '% auto'} no-repeat`; }
+    [['z', z, '%'], ['x', x, ''], ['y', y, ''], ['v', v, '%']].forEach(([q, n, u]) => { const b = $('wpaV' + q); if (b) b.textContent = n + u; const r = b && b.closest('.wpa-sl').querySelector('input'); if (r && String(r.value) !== String(n) && document.activeElement !== r) r.value = n; });
+    clearTimeout(wpLookT);
+    const id = noteEdit.id, look = noteEdit.wpl;
+    wpLookT = setTimeout(() => api('setNoteWallpaperLook', id, look).catch(fail), 700);
+  }
+  function wpaDrag(e) {
+    const pv = e.currentTarget, r = pv.getBoundingClientRect(), [, x0, y0] = noteWpl(noteEdit && noteEdit.wpl), sx = e.clientX, sy = e.clientY;
+    pv.setPointerCapture && pv.setPointerCapture(e.pointerId); e.preventDefault();
+    const move = ev => {
+      const nx = Math.max(0, Math.min(100, Math.round(x0 - (ev.clientX - sx) / r.width * 100))), ny = Math.max(0, Math.min(100, Math.round(y0 - (ev.clientY - sy) / r.height * 100)));
+      const a = noteWpl(noteEdit.wpl); if (a[1] === nx && a[2] === ny) return;
+      noteWpLook('x', nx); noteWpLook('y', ny);
+      ['x', 'y'].forEach((q, i) => { const b = $('wpaV' + q), inp = b && b.closest('.wpa-sl').querySelector('input'); if (inp) inp.value = [nx, ny][i]; });
+    };
+    const up = () => { pv.removeEventListener('pointermove', move); pv.removeEventListener('pointerup', up); pv.removeEventListener('pointercancel', up); };
+    pv.addEventListener('pointermove', move); pv.addEventListener('pointerup', up); pv.addEventListener('pointercancel', up);
   }
   async function noteWpRemove() {
     if (!noteEdit || !noteEdit.id) return;
@@ -2192,6 +2461,7 @@
       ${NOTE_PATTERNS.map(([id, label]) => `<button class="mn-pat ${b.pattern === id ? 'on' : ''}" style="background:${notePat(id, base, hexDark(base))}" onclick="noteSetBg('${id}')" aria-label="${label}" aria-pressed="${b.pattern === id}" data-tip="${label}"></button>`).join('')}
       <label class="mn-wp-up" data-tip="Upload a picture as this note’s wallpaper"><input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onchange="noteWpUpload(this)">🖼 ${n.wp ? 'Change wallpaper' : 'Wallpaper'}</label>
       ${n.wp ? `<button class="mn-wp-x" onclick="noteWpRemove()" aria-label="Remove the wallpaper">✕</button>` : ''}
+      ${n.wp ? noteWpAdjHtml(n) : ''}
       <small>Shared notes show this background${n.wp ? ' and wallpaper' : ''} too${b.theme && !n.wp ? ' · on the theme background, each person sees it in their own theme' : ''}</small></div>`;
   }
   const VAL_SRC = [['tally', '🧮', 'Tally $ total'], ['orders', '🚚', 'Tagged orders'], ['items', '📦', 'Tagged items’ stock value'], ['time', '⏱', 'Tally hours × rate']];
@@ -2303,6 +2573,7 @@
     if (r.t === 'contact' && contactById(r.id)) { closeSheet(); return openContactCard(r.id); }
     if (r.t === 'catalog') return openCatalogNotes(r.id);
     if (r.t === 'project') { closeSheet(); return openProjectCard(r.name); }
+    if (r.t === 'receipt') { retNotesOpen = r.open || ''; return openReceiptsFor(r.kind, r.q || ''); }
     renderMyNotes();
   }
   const noteSnip = (t, n) => {
@@ -3429,28 +3700,59 @@
   async function openCountGrid() {
     if (!cgAccess()) return toast('The count sheet is only for the app owner and the admins they choose.', true);
     openSheet('<h2>🧮 Count sheet</h2><div class="loading">Reading the sheet…</div>'); $('sheet').dataset.panel = 'countgrid';
-    try { const r = await api('getCountGrid'); if ($('sheet').dataset.panel !== 'countgrid') return; cg = Object.assign(r, { edits: {}, sel: new Set(), lbl: '', newOpen: false, q: (cg && cg.q) || '', show: (cg && cg.show) || 'all', more: 0 }); renderCountGrid(); }
+    try { const r = await api('getCountGrid'); if ($('sheet').dataset.panel !== 'countgrid') return; cg = Object.assign(r, { edits: {}, sel: new Set(), lbl: '', newOpen: false, q: (cg && cg.q) || '', f: (cg && cg.f) || new Set(), labels: (cg && cg.labels) || new Set(), locs: (cg && cg.locs) || new Set(), more: 0 }); renderCountGrid(); }
     catch (e) { closeSheet(); fail(e); }
   }
   const cgVal = (r, k) => { const e = cg.edits[r.row]; return e && k in e ? e[k] : r[k]; };
   const cgColor = r => { const e = cg.edits[r.row]; return e && 'color' in e ? e.color : r.qtyColor || ''; };
   const cgN = () => Object.values(cg.edits).reduce((n, e) => n + Object.keys(e).length, 0);
-  function cgRows() {
-    const q = norm(cg.q);
-    return cg.rows.filter(r => (!q || norm([r.name, r.partNumber, r.location, r.shelf, r.job].join(' ')).includes(q))
-      && (cg.show === 'all' || (cg.show === 'green' && isGreen(cgColor(r))) || (cg.show.startsWith('c:') && cgColor(r) === cg.show.slice(2)) || (cg.show === 'diff' && String(cgVal(r, 'left')) !== String(cgVal(r, 'avail')))
-        || (cg.show === 'edited' && cg.edits[r.row]) || (cg.show === 'blank' && cgVal(r, 'left') === '')));
+  const CG_F = { green: r => isGreen(cgColor(r)), diff: r => String(cgVal(r, 'left')) !== String(cgVal(r, 'avail')), blank: r => cgVal(r, 'left') === '', edited: r => !!cg.edits[r.row] };
+  function cgQuery(q) {
+    return String(q || '').split('|').map(g => g.trim()).filter(Boolean).map(g => (g.match(/"[^"]*"|[^\s,]+/g) || []).map(t => {
+      const neg = /^-./.test(t) && !/^-\d/.test(t), w = norm((neg ? t.slice(1) : t).replace(/^"|"$/g, ''));
+      const m = /^(avail|qty|start|left)(<=|>=|<|>|=|:)(blank|\d+)$/.exec(w);
+      return m ? { num: m[1] === 'qty' ? 'avail' : m[1] === 'start' ? 'left' : m[1], op: m[2] === ':' ? '=' : m[2], v: m[3] } : { w, neg };
+    }).filter(t => t.num || t.w));
   }
+  function cgTermHit(r, t, hay) {
+    if (t.num) { const v = cgVal(r, t.num);
+      if (t.v === 'blank') return (v === '') === (t.op === '=');
+      if (v === '' || isNaN(Number(v))) return false; const a = Number(v), b = Number(t.v);
+      return t.op === '<' ? a < b : t.op === '>' ? a > b : t.op === '<=' ? a <= b : t.op === '>=' ? a >= b : a === b; }
+    const hit = hay.includes(t.w) || hay.replace(/\s+/g, '').includes(t.w.replace(/\s+/g, ''));
+    return t.neg ? !hit : hit;
+  }
+  function cgRows() {
+    const groups = cgQuery(cg.q), fs = [...cg.f];
+    return cg.rows.filter(r => {
+      if (fs.some(k => !CG_F[k](r))) return false;
+      if (cg.labels.size && !cg.labels.has(cgColor(r))) return false;
+      if (cg.locs.size && !cg.locs.has(r.location || '')) return false;
+      if (!groups.length) return true;
+      const hay = norm([r.name, r.partNumber, r.location, r.shelf, r.job, r.category, cgColor(r) ? labelOf(cgColor(r)) : 'no label'].join(' '));
+      return groups.some(g => g.every(t => cgTermHit(r, t, hay)));
+    });
+  }
+  const cgFilterCount = () => cg.f.size + cg.labels.size + cg.locs.size + (cgQuery(cg.q).length ? 1 : 0);
+  function cgClearFilters() { cg.f.clear(); cg.labels.clear(); cg.locs.clear(); cg.q = ''; cg.more = 0; renderCountGrid(true); }
+  function cgToggle(set, k) { cg[set].has(k) ? cg[set].delete(k) : cg[set].add(k); cg.more = 0; renderCountGrid(true); }
   function renderCountGrid(keepScroll) {
     const sh = $('sheet'), top = sh.scrollTop, list = cgRows(), shown = list.slice(0, 120 + cg.more), n = cgN();
-    const cnt = k => cg.rows.filter(r => k === 'green' ? isGreen(cgColor(r)) : k === 'diff' ? String(cgVal(r, 'left')) !== String(cgVal(r, 'avail')) : k === 'edited' ? cg.edits[r.row] : cgVal(r, 'left') === '').length;
-    const chip = (k, l) => `<button class="chip ${cg.show === k ? 'active' : ''}" onclick="cg.show='${k}'; cg.more=0; renderCountGrid()">${l}${k === 'all' ? '' : ' · ' + cnt(k)}</button>`;
+    const cnt = k => cg.rows.filter(CG_F[k]).length, nf = cgFilterCount();
+    const chip = (k, l) => `<button class="chip ${cg.f.has(k) ? 'active' : ''}" aria-pressed="${cg.f.has(k)}" onclick="cgToggle('f', '${k}')">${cg.f.has(k) ? '✓ ' : ''}${l} · ${cnt(k)}</button>`;
+    const locs = {}; cg.rows.forEach(r => { const l = r.location || ''; locs[l] = (locs[l] || 0) + 1; });
+    const locChips = Object.keys(locs).sort((a, b) => locs[b] - locs[a]).map(l => `<button class="chip ${cg.locs.has(l) ? 'active' : ''}" aria-pressed="${cg.locs.has(l)}" onclick="cgToggle('locs', ${esc(JSON.stringify(l))})">${cg.locs.has(l) ? '✓ ' : '📍 '}${esc(l || 'No location')} · ${locs[l]}</button>`).join('');
     sh.innerHTML = `<div class="grab"></div><h2 style="margin-bottom:2px">🧮 Count sheet</h2>
       <div class="muted-note" style="padding:0 0 8px">Every row of the master sheet: <b>${esc(cg.leftTitle)}</b> and <b>${esc(cg.availTitle)}</b>. ${cgCanEdit() ? 'Edit any number, then 💾 Save.' : '<b>👁 View only</b>: ask the app owner for edit access.'}</div>
       ${isOwnerMe() ? `<button class="attach-btn cg-who" onclick="openCountAccess()">👥 Who can use this <small>pick admins who can view or edit</small></button>` : ''}
-      <input class="field" type="search" placeholder="Search name, part #, location, job…" value="${esc(cg.q)}" oninput="cg.q=this.value; cg.more=0; cgRedrawList()" style="margin-bottom:8px">
+      <input class="field" type="search" placeholder="Search: words, -leave out, a | b, avail<5, start=0…" value="${esc(cg.q)}" oninput="cg.q=this.value; cg.more=0; cgRedrawList()" style="margin-bottom:4px">
+      <div class="cg-tip">All words must match · <code>-word</code> leaves out · <code>a | b</code> either · <code>"exact phrase"</code> · <code>avail&lt;5</code> <code>avail=0</code> <code>start&gt;=10</code> <code>start=blank</code></div>
       <div id="cgLabels">${cgLabelsHtml()}</div>
-      <div class="chips cg-chips">${chip('all', 'All · ' + cg.rows.length)}${chip('green', '🟩 Green')}${chip('diff', '≠ Different')}${chip('blank', '◻ Blank start')}${chip('edited', '✎ Edited')}</div>
+      <div class="cg-fhead">Filters <small>tap several: rows must match all of them</small></div>
+      <div class="chips cg-chips">${chip('green', '🟩 Green')}${chip('diff', '≠ Different')}${chip('blank', '◻ Blank start')}${chip('edited', '✎ Edited')}</div>
+      <div class="cg-fhead">Locations <small>any of the ones ticked</small></div>
+      <div class="chips cg-chips cg-locs">${locChips}</div>
+      <div class="cg-status" id="cgStatus">${cgStatusHtml(list.length, nf)}</div>
       <div class="cg-head"><span>Item</span><span title="${esc(cg.leftTitle)}">${esc(cg.leftTitle)}</span><span>${esc(cg.availTitle)}</span></div>
       <div id="cgList">${cgListHtml(list, shown)}</div>
       <div class="sticky-foot">${cgCanEdit() ? `
@@ -3472,7 +3774,8 @@
             oninput="cgEdit(${r.row}, '${k}', this.value, this)" onkeydown="cgKey(event, this)" aria-label="${esc((k === 'left' ? cg.leftTitle : cg.availTitle) + ' for ' + r.name)}"><small ${ed ? '' : 'hidden'}>was ${esc(r[k] === '' ? 'blank' : r[k])}</small></label>`; }).join('')}
       </div>`; }).join('') + (list.length > shown.length ? `<button class="btn ghost" style="width:100%;margin-top:6px" onclick="cg.more += 200; cgRedrawList()">Show more (${list.length - shown.length})</button>` : '');
   }
-  function cgRedrawList() { const list = cgRows(); $('cgList').innerHTML = cgListHtml(list, list.slice(0, 120 + cg.more)); }
+  function cgStatusHtml(n, nf) { return `Showing <b>${n}</b> of ${cg.rows.length} row${cg.rows.length === 1 ? '' : 's'}${nf ? ` · ${nf} filter${nf === 1 ? '' : 's'} on <button class="cg-x" onclick="cgClearFilters()">Clear all</button>` : ''}`; }
+  function cgRedrawList() { const list = cgRows(); $('cgList').innerHTML = cgListHtml(list, list.slice(0, 120 + cg.more)); const st = $('cgStatus'); if (st) st.innerHTML = cgStatusHtml(list.length, cgFilterCount()); }
   function cgEdit(row, k, v, el) {
     const r = cg.rows.find(x => x.row === row); if (!r || !cgCanEdit()) return;
     const val = v === '' ? '' : Number(v), e = cg.edits[row] || {};
@@ -3518,9 +3821,9 @@
   function cgLabelsHtml() {
     const pal = cgPalette(), sel = cg.sel.size, ed = cgCanEdit(), none = cg.rows.filter(r => !cgColor(r)).length;
     const hint = sel ? `<b>${sel} selected</b> · tap a label to put it on ${sel === 1 ? 'it' : 'them'} <button class="cg-x" onclick="cgSelAll(false)">Clear</button>`
-      : `🏷 Labels · ${ed ? 'tick items to label them, or tap one to see its items' : 'tap one to see its items'}${ed ? ' <button class="cg-x" onclick="cgSelAll(true)">Select all shown</button>' : ''}`;
-    const chips = pal.map(({ c, n }) => `<span class="cg-lchip ${cg.show === 'c:' + c ? 'on' : ''}"><button onclick="cgLabelTap('${c}')"><i style="background:${c}"></i>${esc(labelOf(c))} <small>${n}</small></button>${ed ? `<button class="cg-led" onclick="cgLabelMenu('${c}')" aria-label="Edit ${esc(labelOf(c))}">✎</button>` : ''}</span>`).join('')
-      + (sel ? `<span class="cg-lchip rm"><button onclick="cgApplyColor('')">⌫ Remove label</button></span>` : `<span class="cg-lchip ${cg.show === 'c:' ? 'on' : ''}"><button onclick="cgLabelTap('')"><i class="none"></i>No label <small>${none}</small></button></span>`)
+      : `🏷 Labels · ${ed ? 'tick items to label them, or tap labels to see their items' : 'tap labels to see their items'}${ed ? ' <button class="cg-x" onclick="cgSelAll(true)">Select all shown</button>' : ''}`;
+    const chips = pal.map(({ c, n }) => `<span class="cg-lchip ${cg.labels.has(c) ? 'on' : ''}"><button onclick="cgLabelTap('${c}')"><i style="background:${c}"></i>${esc(labelOf(c))} <small>${n}</small></button>${ed ? `<button class="cg-led" onclick="cgLabelMenu('${c}')" aria-label="Edit ${esc(labelOf(c))}">✎</button>` : ''}</span>`).join('')
+      + (sel ? `<span class="cg-lchip rm"><button onclick="cgApplyColor('')">⌫ Remove label</button></span>` : `<span class="cg-lchip ${cg.labels.has('') ? 'on' : ''}"><button onclick="cgLabelTap('')"><i class="none"></i>No label <small>${none}</small></button></span>`)
       + (ed ? `<span class="cg-lchip new"><button onclick="cg.newOpen = !cg.newOpen; cg.lbl = ''; cgLabelsRedraw()">＋ New label</button></span>` : '');
     let form = '';
     if (ed && cg.newOpen) form = `<div class="cg-lform"><input type="color" id="cgNewC" value="#7c3aed" aria-label="Colour"><input class="field" id="cgNewN" maxlength="40" placeholder="Label name, e.g. Staged for install">
@@ -3546,10 +3849,10 @@
   }
   function cgLabelTap(c) {
     if (cg.sel.size && cgCanEdit()) return cgApplyColor(c);
-    cg.show = cg.show === 'c:' + c ? 'all' : 'c:' + c; cg.more = 0; renderCountGrid(true);
+    cgToggle('labels', c);
   }
   function cgLabelMenu(c) { cg.lbl = cg.lbl === c ? '' : c; cg.newOpen = false; cgLabelsRedraw(); }
-  function cgSelColor(c) { cg.sel = new Set(cg.rows.filter(r => cgColor(r) === c).map(r => r.row)); cg.lbl = ''; cg.show = 'c:' + c; renderCountGrid(true); }
+  function cgSelColor(c) { cg.sel = new Set(cg.rows.filter(r => cgColor(r) === c).map(r => r.row)); cg.lbl = ''; cg.labels = new Set([c]); renderCountGrid(true); }
   function cgClearColor(c) {
     const rows = cg.rows.filter(r => cgColor(r) === c);
     if (!rows.length || !confirm(`Take ${labelOf(c)} off all ${rows.length} item${rows.length === 1 ? '' : 's'}? Their Available Today cell goes back to no colour when you 💾 Save.`)) return;
@@ -3718,7 +4021,7 @@
     $('backdrop').classList.add('open');
     const wasOpen = $('sheet').classList.contains('open');
     $('sheet').classList.add('open');
-    if (!wasOpen && document.documentElement.dataset.sheetfx) playOpenFx($('sheet'));
+    if (!wasOpen && (document.documentElement.dataset.sheetfx || Object.keys(fxBy()).length)) Promise.resolve().then(() => playOpenFx($('sheet')));
     document.body.classList.add('sheet-open');
     resumeSoon();
   }
@@ -5097,6 +5400,18 @@
   const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   function retSiblings(r) { return (retList || []).filter(x => x !== r && (retKind === 'po' ? r.po && x.po === r.po : r.orderNo && x.orderNo === r.orderNo)); }
   const retWhere = x => (retKind === 'po' ? 'PO ' + x.po + ' receipt' : x.orderNo + ' return') + ' from ' + when(x.timestamp);
+  let retNotesOpen = '';
+  function retNoteTarget(r) {
+    const k = retKind === 'po' ? 'po' : 'return', pq = k === 'po' ? (r.po || r.vendor) : (r.from || r.orderNo || r.contact);
+    const what = k === 'po' ? [r.po && 'PO ' + r.po, r.vendor] : [r.from && 'From ' + r.from, r.orderNo, r.contact];
+    return { t: k, ref: (r.adjIds || [])[0] || pq || '', label: (k === 'po' ? 'PO received · ' : 'Return · ') + (what.filter(Boolean).join(' · ') || fmtDay(dayKeyOf(r.timestamp))), q: pq || '' };
+  }
+  const retNoteBack = r => { const t = retNoteTarget(r); return { t: 'receipt', kind: t.t, q: t.q, open: t.ref }; };
+  function retNotesBtn(r) {
+    const t = retNoteTarget(r); if (!t.ref) return '';
+    const n = notesTagged([t]).length, on = retNotesOpen === t.ref;
+    return `<button class="ret-att-add ret-nb${on ? ' on' : ''}" onclick="retNotesOpen = retNotesOpen === ${esc(JSON.stringify(t.ref))} ? '' : ${esc(JSON.stringify(t.ref))}; renderReturns()" aria-expanded="${on}">📝 ${n ? 'Notes · ' + n : 'Note'}</button>`;
+  }
   let retTag = null;
   function retTagToggle(i) {
     const r = retList && retList[i]; if (!r) return;
@@ -5369,7 +5684,7 @@
       <div class="ret-top"><b>${po ? '📥' : '↩️'} ${units} unit${units === 1 ? '' : 's'}</b><span class="muted">${esc(when(r.timestamp))} · ${esc(personName(r.user))}</span></div>
       ${what ? `<div class="ret-what">${esc(what)}</div>` : ''}
       ${r.note ? `<div class="muted ret-what">${esc(r.note)}</div>` : ''}
-      ${photoRow}<div class="ret-atts">${tagBtn}${att}</div>${retTag && retTag.i === i ? retTagHtml(r, po) : ''}
+      ${photoRow}<div class="ret-atts">${tagBtn}${retNotesBtn(r)}${att}</div>${retTag && retTag.i === i ? retTagHtml(r, po) : ''}${retNotesOpen && retNotesOpen === retNoteTarget(r).ref ? `<div class="cat-notes">${noteBlockHtml([retNoteTarget(r)], retNoteBack(r))}</div>` : ''}
       <div class="ret-lines">${r.lines.map(l => { const it = items.find(x => x.key === l.key);
         return `<div class="${it ? 'tap' : ''}" ${it ? `onclick="openDetail('${esc(it.id)}')"` : ''}><span class="chg pos">+${l.qty}</span> ${esc(l.name)}${l.endpoints.length ? ` <span class="muted">· ${esc(l.endpoints.join(', '))}</span>` : ''}</div>`; }).join('')}</div>
       <div class="ret-foot">${r.tracker ? `<span class="pm-sent">${esc(trackerText(r.tracker))}</span>` : `<span class="ret-todo">⚠ Not in the tracker yet</span>`}

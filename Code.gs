@@ -378,7 +378,7 @@ function removeMyPhoto() {
 // Each person only ever gets their own notes back from these functions. The rows live in a hidden "My Notes" tab;
 // attached PDFs go in a Drive folder "My Notes Files", shared only with the note's owner (not with the domain).
 const NOTES_SHEET = 'My Notes';
-const NOTES_HEADERS = ['Owner', 'ID', 'Title', 'Text', 'Links', 'Files', 'Updated', 'Created', 'Color', 'Tags', 'Media', 'Value', 'Tally', 'Wallpaper'];
+const NOTES_HEADERS = ['Owner', 'ID', 'Title', 'Text', 'Links', 'Files', 'Updated', 'Created', 'Color', 'Tags', 'Media', 'Value', 'Tally', 'Wallpaper', 'Wallpaper Look'];
 // 🧮 A note's tally: rows of { label, n, u } (u: ft in yd mi m km = distance, ea = quantity, usd = value) and du, the unit the distance total shows in
 const TALLY_UNITS = ['ft', 'in', 'yd', 'mi', 'm', 'km', 'ea', 'usd', 'time'];   // time: s / e are start and end ("HH:MM")
 function cleanTally_(t) {
@@ -539,7 +539,7 @@ function noteMentionRows_(me, since) {
 function getSharedNote(id) {
   requireRole_('Viewer');
   const n = sharedNote_(id);
-  return { id: n.id, title: n.title, text: n.text, color: n.color, wp: n.wp, links: n.links, files: n.files.map(f => ({ id: f.id, name: f.name, kb: f.kb })), media: n.media, value: n.value, tally: n.tally, owner: n.owner, updated: n.updated, mine: n.owner === currentUser_().toLowerCase() };
+  return { id: n.id, title: n.title, text: n.text, color: n.color, wp: n.wp, wpl: n.wpl || '', links: n.links, files: n.files.map(f => ({ id: f.id, name: f.name, kb: f.kb })), media: n.media, value: n.value, tally: n.tally, owner: n.owner, updated: n.updated, mine: n.owner === currentUser_().toLowerCase() };
 }
 function getSharedNoteFile(id, fileId) {
   requireRole_('Viewer');
@@ -552,7 +552,7 @@ function sharedNote_(id) {
   const r = last < 2 ? null : sh.getRange(2, 1, last - 1, NOTES_HEADERS.length).getValues().find(x => String(x[1]) === String(id));
   if (!r) throw new Error('That note was deleted.');
   const n = { owner: String(r[0]).trim().toLowerCase(), id: String(r[1]), title: String(r[2] || ''), text: String(r[3] || ''), color: String(r[8] || ''), links: jsonList_(r[4]), files: jsonList_(r[5]),
-    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]), wp: String(r[13] || '') };
+    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]), wp: String(r[13] || ''), wpl: wpLook_(r[14]) };
   if (n.owner !== me && !mentions_(n.text, me)) throw new Error('That note isn’t shared with you any more.');
   return n;
 }
@@ -579,10 +579,10 @@ function readMyNotes_(sheet) {
   if (last < 2) return [];
   return sheet.getRange(2, 1, last - 1, NOTES_HEADERS.length).getValues().map((r, i) => ({ row: i + 2, owner: String(r[0]).trim().toLowerCase(), id: String(r[1]),
     title: String(r[2] || ''), text: String(r[3] || ''), links: jsonList_(r[4]), files: jsonList_(r[5]),
-    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), created: r[7] instanceof Date ? r[7].toISOString() : String(r[7] || ''), color: String(r[8] || ''), tags: jsonList_(r[9]), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]), wp: String(r[13] || '') }))
+    updated: r[6] instanceof Date ? r[6].toISOString() : String(r[6] || ''), created: r[7] instanceof Date ? r[7].toISOString() : String(r[7] || ''), color: String(r[8] || ''), tags: jsonList_(r[9]), media: jsonList_(r[10]), value: r[11] === '' || r[11] == null || isNaN(Number(r[11])) ? null : Number(r[11]), tally: tallyOf_(r[12]), wp: String(r[13] || ''), wpl: wpLook_(r[14]) }))
     .filter(n => n.owner === me && n.id);
 }
-const noteOut_ = n => ({ id: n.id, title: n.title, text: n.text, links: n.links, files: n.files, updated: n.updated, created: n.created, color: n.color, tags: n.tags, media: n.media, value: n.value, tally: n.tally, wp: n.wp });
+const noteOut_ = n => ({ id: n.id, title: n.title, text: n.text, links: n.links, files: n.files, updated: n.updated, created: n.created, color: n.color, tags: n.tags, media: n.media, value: n.value, tally: n.tally, wp: n.wp, wpl: n.wpl || '' });
 /** Your notes, newest change first. */
 function getMyNotes() {
   requireRole_('Viewer');
@@ -726,6 +726,25 @@ function getNoteMediaPreviews(id) {
 // 🖼 A note's own wallpaper: a picture uploaded for its background (shrunk on the phone first), kept in the private "My Notes
 // Files" folder like its photos. The owner and anyone the note @mentions see it (getNoteWallpaper checks, like shared notes).
 const MAX_NOTE_WP_KB = 900;
+// 🎚 How a note's wallpaper sits: "zoom,x,y,cover" — zoom 100–400 (% of filling the note), x / y 0–100 (which part shows),
+// cover 0–90 (% white over the picture, so the text stays readable). Blank = the defaults (100, 50, 50, 58).
+function wpLook_(v) {
+  const m = /^(\d{2,3}),(\d{1,3}),(\d{1,3}),(\d{1,2})$/.exec(String(v || '').trim()); if (!m) return '';
+  const c = (x, a, b) => Math.max(a, Math.min(b, Number(x)));
+  return [c(m[1], 100, 400), c(m[2], 0, 100), c(m[3], 0, 100), c(m[4], 0, 90)].join(',');
+}
+/** Your note's wallpaper look (see wpLook_). Shared notes show it the same way. */
+function setNoteWallpaperLook(id, look) {
+  requireRole_('Viewer');
+  const v = wpLook_(look);
+  return withLock_(() => {
+    const sheet = notesSheet_(), n = readMyNotes_(sheet).find(x => x.id === String(id));
+    if (!n) throw new Error('That note was deleted (maybe on another device).');
+    if (!n.wp) throw new Error('This note has no wallpaper.');
+    sheet.getRange(n.row, 15).setValue(v);
+    return { wpl: v };
+  });
+}
 function setNoteWallpaper(id, dataUrl) {
   requireRole_('Viewer');
   const me = currentUser_().toLowerCase();
@@ -747,7 +766,7 @@ function setNoteWallpaper(id, dataUrl) {
       file.setDescription('Private note wallpaper for ' + me + ' (Supplybot · My notes)');
       fid = file.getId();
     }
-    sheet.getRange(n.row, 14).setValue(fid);
+    sheet.getRange(n.row, 14, 1, 2).setValues([[fid, '']]);   // a new picture starts with the default look
     sheet.getRange(n.row, 7).setValue(new Date());
     return { wp: fid };
   });
@@ -1638,7 +1657,7 @@ function getCountGrid() {
   const rows = [];
   all.values.forEach((row, i) => {
     const it = rowToItem_(row, i + 2, g.cols, all.shown[i]); if (!it.name) return;
-    rows.push({ row: i + 2, key: it.key, name: it.name, partNumber: it.partNumber, location: it.location, shelf: it.shelf, job: it.job,
+    rows.push({ row: i + 2, key: it.key, name: it.name, partNumber: it.partNumber, location: it.location, shelf: it.shelf, job: it.job, category: it.category,
       qtyColor: cellFill_(fills[i][0]), leftColor: cellFill_(leftFills[i][0]), left: num(leftVals[i][0]), avail: num(row[g.cols.quantity]) });
   });
   return { leftTitle: g.leftTitle, availTitle: g.availTitle, rows, access };
@@ -3735,7 +3754,18 @@ function buildCatalog_(cat) {
     sections +
     (skipped ? '<div class="sub" style="margin-top:8px">' + skipped + ' photo' + (skipped === 1 ? ' was' : 's were') + ' left out to keep this PDF a manageable size.</div>' : '') +
     '<div class="foot">Made with Supplybot on ' + e(Utilities.formatDate(new Date(), tz, "MMM d, yyyy 'at' h:mm a")) + ' by ' + e(currentUser_()) + '</div></body></html>';
-  return { html, title, groups, count, units, value, showCost, tz };
+  // 🧾 The total: the items (at the prices shown) plus any additional costs (freight, install, permits…), above the footer.
+  // Only with prices showing. Works with every design: it inherits the page's colours.
+  const extras = (Array.isArray(cat.extras) ? cat.extras : []).slice(0, 20).map(x => ({ label: String(x && x.label || '').trim().slice(0, 80), amount: Number(x && x.amount) }))
+    .filter(x => x.label && isFinite(x.amount) && x.amount !== 0);
+  const extraSum = extras.reduce((n, x) => n + x.amount, 0);
+  const tot = !showCost ? '' : '<table style="width:100%;border-collapse:collapse;margin:18px 0 4px;font-size:10pt;page-break-inside:avoid">' +
+    '<tr><td style="padding:5px 8px;border-top:2px solid currentColor;opacity:.85">Items' + (showQty ? ' (' + units + ' qty)' : '') + '</td><td style="padding:5px 8px;border-top:2px solid currentColor;text-align:right">' + usd(value) + '</td></tr>' +
+    extras.map(x => '<tr><td style="padding:4px 8px;opacity:.85">' + e(x.label) + '</td><td style="padding:4px 8px;text-align:right">' + usd(x.amount) + '</td></tr>').join('') +
+    '<tr><td style="padding:7px 8px;border-top:1px solid currentColor;font-weight:bold;font-size:12pt">Total</td><td style="padding:7px 8px;border-top:1px solid currentColor;text-align:right;font-weight:bold;font-size:14pt">' + usd(value + extraSum) + '</td></tr></table>';
+  const at = html.lastIndexOf('<div class="foot">');
+  const out = tot && at > 0 ? html.slice(0, at) + tot + html.slice(at) : html;
+  return { html: out, title, groups, count, units, value, showCost, tz, extras, total: value + extraSum };
 }
 
 /**

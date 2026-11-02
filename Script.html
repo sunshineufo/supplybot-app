@@ -37,7 +37,10 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const byId = id => items.find(i => i.id === id);
   const norm = s => String(s ?? '').trim().toLowerCase();
-  const itemHay = i => norm([i.name, ...(i.tags || []), i.partNumber, i.barcode, i.manufacturer, i.category, i.location, i.shelf, i.job,
+  const hayMemo = new WeakMap();
+  const itemHay = i => { const sig = [i.name, i.partNumber, i.location, i.shelf, i.job, i.category, (i.tags || []).join('|'), (i.endpoints || []).length, (i.serials || []).length, (i.documents || []).length, (i.sx || '').length].join('\u0001');
+    const c = hayMemo.get(i); if (c && c.sig === sig) return c.hay; const hay = itemHayBuild(i); hayMemo.set(i, { sig, hay }); return hay; };
+  const itemHayBuild = i => norm([i.name, ...(i.tags || []), i.partNumber, i.barcode, i.manufacturer, i.category, i.location, i.shelf, i.job,
     i.voltage, i.phase, i.amperage, i.rating, i.connector, i.dimensions, i.weight, specsLine(i), i.sx, ...(i.endpoints || []), ...(i.serials || []),
     ...(i.documents || []).map(d => d.name)].join(' '));
   const hayHit = (hay, q) => hay.includes(q) || (/\s/.test(q) || /\s/.test(hay)) && hay.replace(/\s+/g, '').includes(q.replace(/\s+/g, ''));
@@ -393,7 +396,8 @@
     return saved;
   }
   const isAvailableJob = it => !it.job || /^available$/i.test(it.job);
-  const money = n => Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const MONEY_FMT = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  const money = n => MONEY_FMT.format(Number(n));
   function weightLbs(v) {
     const m = /(\d*\.?\d+)\s*(kgs?|kilo\w*|oz|ounces?|lbs?|pounds?|#)?/i.exec(String(v ?? '').replace(/,/g, ''));
     const n = m ? parseFloat(m[1]) : NaN;
@@ -1121,7 +1125,8 @@
     $('suiResults').innerHTML = barResultsHtml(v);
   }
   let searchT = 0;
-  function searchTyped() { clearTimeout(searchT); searchT = setTimeout(() => { render(); hdrSearch(); }, 110); }
+  let searchListT = 0;
+  function searchTyped() { clearTimeout(searchT); clearTimeout(searchListT); searchT = setTimeout(() => { hdrSearch(); searchListT = setTimeout(render, 240); }, 110); }
   function hdrSearch() {
     const v = $('search').value, box = $('hdrResults');
     if (!norm(v)) { box.hidden = true; return; }
@@ -1407,6 +1412,7 @@
       + (cgAccess() ? `<button role="menuitem" onclick="gearMenuClose(); openCountGrid()"><span>🧮</span><span><b>Count sheet</b><small>Starting Qty and Available Today${cgCanEdit() ? '' : ' · view only'}</small></span></button>` : '')
       + `<button role="menuitemcheckbox" aria-checked="${pinCapsOn()}" class="gm-tog ${pinCapsOn() ? 'on' : ''}" onclick="setPinCaps(!pinCapsOn())"><span>🏷</span><span><b>Pin captions</b><small>Name and key fact under each pin</small></span><i aria-hidden="true"></i></button>`
       + `<button role="menuitemcheckbox" aria-checked="${qfabOn()}" class="gm-tog ${qfabOn() ? 'on' : ''}" onclick="setQfab(!qfabOn())"><span>＋</span><span><b>Quick-create button</b><small>New order, note or item from any screen</small></span><i aria-hidden="true"></i></button>`
+      + (tab === 'log' || tab === 'reports' || tab === 'orders' ? '' : `<button role="menuitemcheckbox" aria-checked="${!summaryOff()}" class="gm-tog ${summaryOff() ? '' : 'on'}" onclick="setSummaryOff(!summaryOff())"><span>🔢</span><span><b>Stock count bar</b><small>All rows · In stock · Out, above the list</small></span><i aria-hidden="true"></i></button>`)
       + (tab === 'log' || tab === 'reports' ? '' : `<button role="menuitemcheckbox" aria-checked="${!chipsOff()}" class="gm-tog ${chipsOff() ? '' : 'on'}" onclick="setChipsOff(!chipsOff())"><span>⚲</span><span><b>${tab === 'orders' ? 'Status' : 'Location'} filter row</b><small>${tab === 'orders' ? 'All / Drafts / Shipped / Cancelled' : 'The location chips'} at the top of this screen</small></span><i aria-hidden="true"></i></button>`);
     if (gearEditing) return `<div class="gm-head">Shortcuts in this menu</div>` + all.map(b => `<button role="menuitemcheckbox" aria-checked="${on.includes(b.k)}" class="gm-tog ${on.includes(b.k) ? 'on' : ''}" onclick="gearToggle('${b.k}')"><span>${b.ic}</span><span><b>${esc(b.label)}</b></span><i aria-hidden="true"></i></button>`).join('')
       + `<button class="gm-done" onclick="gearEditing = false; gearRefresh()">✓ Done</button>`;
@@ -1508,7 +1514,7 @@
     if (b.dataset.tk) { const [kind, ...k] = b.dataset.tk.split('|'), t = tagPins.find(x => x.kind === kind && x.key === k.join('|')); return t ? Object.assign({ tag: true }, t) : null; }
     const [t, ...r] = String(b.dataset.pk || '').split('|'), ref = r.join('|'); return pins.find(x => x.t === t && String(x.ref) === ref) || null;
   }
-  function pinCapsPaint() {
+  function pinCapsPaint(quiet) {
     const on = pinCapsOn() && !pinsHidden();
     let box = $('pinCaps');
     if (!on) { if (box) box.remove(); return; }
@@ -1524,8 +1530,7 @@
       if (cap.innerHTML !== html) cap.innerHTML = html;
     });
     [...box.children].forEach(c => { if (!keep.has(c.dataset.k)) c.remove(); });
-    capSeenAt = 0;
-    if (!capRaf) capRaf = requestAnimationFrame(pinCapsFollow);
+    if (!quiet) { capSeenAt = 0; pinFollowWake(); }
   }
   function pinCapsFollow() {
     capRaf = 0;
@@ -1541,10 +1546,10 @@
       const w = c.offsetWidth, x = Math.max(4, Math.min(innerWidth - w - 4, r.left + r.width / 2 - w / 2));
       c.style.transform = `translate(${Math.round(x)}px, ${Math.round(r.bottom + 2 + dy)}px)`; c.classList.add('on');
     });
-    if (document.visibilityState === 'visible') capRaf = requestAnimationFrame(pinCapsFollow);
+    if (document.visibilityState === 'visible' && Date.now() < pinMoveUntil) capRaf = requestAnimationFrame(pinCapsFollow);
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && $('pinCaps') && !capRaf) capRaf = requestAnimationFrame(pinCapsFollow); });
-  setInterval(() => { if (pinCapsOn() && document.visibilityState === 'visible') pinCapsPaint(); }, 4000);
+  setInterval(() => { if (pinCapsOn() && document.visibilityState === 'visible') pinCapsPaint(true); }, 4000);
   const freeKey = p => p.tag ? 'tag:' + p.kind + ':' + p.key : p.t + ':' + p.ref;
   function pinEmos() { try { return JSON.parse(localStorage.getItem(emoKey('pinEmojis'))) || {}; } catch (e) { return {}; } }
   function pinFace(p) {
@@ -2258,8 +2263,7 @@
   let lowPinKeys = [], lowPinRaf = 0, lowPinScan = 0;
   function lowPinCheck() {
     const keys = pinsHidden() ? [] : pins.filter(p => p.t === 'item' && !inQc(p) && pinLowItem(items.find(x => x.key === p.ref))).map(p => p.ref);
-    if (keys.join('|') !== lowPinKeys.join('|')) { lowPinKeys = keys; lowPinPaint(); }
-    if (keys.length && !lowPinRaf) lowPinRaf = requestAnimationFrame(lowPinFollow);
+    if (keys.join('|') !== lowPinKeys.join('|')) { lowPinKeys = keys; lowPinPaint(); pinFollowWake(); }
   }
   function lowPinPaint() {
     let box = $('lowPins');
@@ -2282,8 +2286,17 @@
       b.style.setProperty('--tail', Math.max(14, Math.min(w - 14, r.left + r.width / 2 - left)) + 'px');
       b.classList.toggle('below', below); b.classList.add('on');
     });
-    if (!document.hidden) lowPinRaf = requestAnimationFrame(lowPinFollow);
+    if (!document.hidden && Date.now() < pinMoveUntil) lowPinRaf = requestAnimationFrame(lowPinFollow);
   }
+  let pinMoveUntil = Date.now() + 1500;
+  function pinFollowWake(ms) {
+    pinMoveUntil = Math.max(pinMoveUntil, Date.now() + (ms || 900));
+    try {
+      if (lowPinKeys.length && !lowPinRaf) lowPinRaf = requestAnimationFrame(lowPinFollow);
+      if ($('pinCaps') && !capRaf) { capSeenAt = 0; capRaf = requestAnimationFrame(pinCapsFollow); }
+    } catch (e) {  }
+  }
+  ['scroll', 'resize', 'pointermove', 'pointerup', 'transitionend', 'animationend'].forEach(ev => addEventListener(ev, () => pinFollowWake(ev === 'pointermove' ? 400 : 900), { passive: true, capture: true }));
   setInterval(() => { if (me && items.length) lowPinCheck(); }, 1000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && lowPinKeys.length && !lowPinRaf) lowPinRaf = requestAnimationFrame(lowPinFollow); });
   document.addEventListener('pointerover', e => { if (e.pointerType === 'touch' || performance.now() - epicScrollAt < 300) return; const t = e.target.closest && e.target.closest('[data-comic]'); if (t) comicShow(t); }, { passive: true });
@@ -2412,6 +2425,13 @@
   const chipsKind = () => tab === 'orders' ? 'orders' : 'items';
   const chipsHidden = k => { try { return localStorage.getItem(emoKey('chipsHide:' + (k || chipsKind()))) === '1'; } catch (e) { return false; } };
   const chipsOff = k => { try { return localStorage.getItem(emoKey('chipsOff:' + (k || chipsKind()))) === '1'; } catch (e) { return false; } };
+  const summaryOff = () => { try { return localStorage.getItem(emoKey('summaryOff')) === '1'; } catch (e) { return false; } };
+  function setSummaryOff(v) {
+    try { localStorage.setItem(emoKey('summaryOff'), v ? '1' : '0'); } catch (e) {  }
+    render(); if ($('gearMenu')) gearRefresh();
+    if ($('sheet').dataset.panel === 'profile') { const top = $('sheet').scrollTop; renderProfile(); $('sheet').scrollTop = top; }
+    toast(v ? 'Stock count bar off (⚙ brings it back)' : 'Stock count bar on');
+  }
   function setChipsOff(v, kind) {
     try { localStorage.setItem(emoKey('chipsOff:' + (kind || chipsKind())), v ? '1' : '0'); } catch (e) {  }
     renderChips(); if ($('gearMenu')) gearRefresh();
@@ -2519,6 +2539,7 @@
     render();
   }
   const LIST_LIMIT = 150;
+  const isArchived = i => !(i.quantity > 0) && !i.minTrack && !heldOf(i) && !pins.some(p => p.t === 'item' && p.ref === i.key);
   let qrListNow = [];
   const totalsHidden = k => { try { return localStorage.getItem(emoKey('totHide:' + k)) === '1'; } catch (e) { return false; } };
   function setTotalsHidden(v) {
@@ -2560,7 +2581,9 @@
       (!catFilter.size || catFilter.has(catKey(i.category))) && tagMatches(i, 'item') &&
       itemHit(i, q));
     if (tab === 'in') list = list.filter(i => i.quantity > 0);
-    if (tab === 'out') list = list.filter(i => i.quantity <= 0);
+    const archHits = tab === 'all' && q ? list.filter(isArchived).length : 0;
+    if (tab === 'all') list = list.filter(i => !isArchived(i));
+    if (tab === 'out') list = list.filter(isArchived);
     if (!q) searchOut.clear();
     const removedN = list.filter(i => searchOut.has(i.id)).length;
     if (removedN) list = list.filter(i => !searchOut.has(i.id));
@@ -2576,12 +2599,13 @@
             : sortMode === 'extAsc' ? byMoney('extended', 1)
             : byName);
     const inStock = items.filter(i => i.quantity > 0).length;
-    const outCount = items.length - inStock;
+    const outCount = items.filter(isArchived).length, activeCount = items.length - outCount;
     const newItemBtn = epicNewBtn('New Item', 'openForm()', 'add-item');
-    const summary = `<div class="summary">
-      <button class="stat ${tab === 'all' ? 'active' : ''}" onclick="setTab('all')"><b>${items.length}</b><span>All rows</span></button>
+    const summary = summaryOff() ? '' : `<div class="summary">
+      <button class="stat ${tab === 'all' ? 'active' : ''}" onclick="setTab('all')"><b>${activeCount}</b><span>Active</span></button>
       <button class="stat ${tab === 'in' ? 'active' : ''}" onclick="setTab('in')"><b style="color:var(--brand)">${inStock}</b><span>In stock</span></button>
-      <button class="stat ${tab === 'out' ? 'active' : ''}" onclick="setTab('out')"><b style="color:var(--danger)">${outCount}</b><span>Out</span></button></div>`;
+      <button class="stat ${tab === 'out' ? 'active' : ''}" onclick="setTab('out')"><b style="color:var(--muted)">${outCount}</b><span>🗄 Archived</span></button></div>`
+      + (archHits ? `<button class="arch-hint" onclick="setTab('out')">🗄 ${archHits} archived item${archHits === 1 ? '' : 's'} also match${archHits === 1 ? 'es' : ''} · show ${archHits === 1 ? 'it' : 'them'}</button>` : '');
     const sortbar = barHidden('item') ? barPillHtml('item') : `<div class="sortbar">
       <span class="count">${list.length} ${list.length === 1 ? 'item' : 'items'}</span>
       ${fltToggleHtml('item')}
@@ -2607,6 +2631,7 @@
           <i>📊</i><em><b>${total.toLocaleString()}</b> avail.</em><em><b>${money(extTotal)}</b></em><em><b>${weightShown}</b></em><i>▾</i></button>${totalsHideBtn(true)}</div>${removedNote}`
       : `<div class="qtysum"><div class="qhead">📊 Totals<span class="qh-btns"><button onclick="toggleTotals()" aria-expanded="true">▴ Minimize</button>${totalsHideBtn()}</span></div>${removedNote}
       <span>Total available today${filtered ? ' (matching)' : ''}</span><b>${total.toLocaleString()}</b>
+      ${topQtyHtml(list)}
       ${catTotalsHtml(list.map(i => ({ cat: i.category, name: i.name, qty: i.quantity })), 'available')}
       ${promised ? `<small class="${total - promised < 0 ? 'short' : ''}">${promised.toLocaleString()} on draft orders → ${(total - promised).toLocaleString()} left after they ship</small>` : ''}
       <div class="ext"><span>Total extended price</span><b>${money(extTotal)}</b></div>
@@ -2640,7 +2665,9 @@
     return `<div class="lthumb${loading}${p ? '' : ' nophoto'}${sqClass(p)}" data-photo="${esc(p || '')}" ${noOpen ? '' : `onclick="openFromList('${it.id}', listIds)"`}>${inner}</div>`;
   }
   const ITEM_PIC_STYLES = [['small', 'Small'], ['large', 'Large'], ['round', 'Round'], ['banner', 'Banner'], ['grid', 'Grid'],
-    ['polaroid', 'Snapshot'], ['side', 'Showcase'], ['none', 'Text only'], ['hex', 'Hexagon'], ['stack', 'Stack'], ['cover', 'Cover'], ['gridcover', 'Grid cover']];
+    ['polaroid', 'Snapshot'], ['side', 'Showcase'], ['none', 'Text only'], ['hex', 'Hexagon'], ['stack', 'Stack'], ['cover', 'Cover'], ['gridcover', 'Grid cover'],
+    ['textgrid', 'Text grid'], ['halo', 'Halo'], ['tilt', 'Tilted'], ['frame', 'Gallery frame'], ['film', 'Film strip'], ['stamp', 'Postage stamp'],
+    ['blob', 'Blob'], ['diamond', 'Diamond'], ['tape', 'Taped'], ['neon', 'Neon glow'], ['appicon', 'App icon']];
   const picOk = v => ITEM_PIC_STYLES.some(x => x[0] === v);
   const storedPics = k => { try { const v = localStorage.getItem(k); return picOk(v) ? v : ''; } catch (e) { return ''; } };
   let itemPics = storedPics('itemPics') || 'small';
@@ -2815,7 +2842,8 @@
   let od = null;
   let pickerQuery = '', pickerAll = false;
   const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
-  const fmtDay = s => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || ''); return m ? new Date(+m[1], m[2] - 1, +m[3]).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : (s || ''); };
+  const DAY_FMT = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric', year: 'numeric' }), dayMemo = new Map();
+  const fmtDay = s => { if (dayMemo.has(s)) return dayMemo.get(s); const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || ''), v = m ? DAY_FMT.format(new Date(+m[1], m[2] - 1, +m[3])) : (s || ''); if (dayMemo.size < 5000) dayMemo.set(s, v); return v; };
   function dateRange(list) {
     const key = d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : d ? (t => isFinite(t) ? dayKey(new Date(t)) : '')(typeof d === 'number' ? d : Date.parse(d)) : '';
     const days = [...new Set((list || []).map(key).filter(Boolean))].sort();
@@ -3254,6 +3282,8 @@
     scrollTo({ top: 0, behavior: 'smooth' });
     toast('↺ Filters cleared · showing everything');
   }
+  let ordersShownN = 120, ordersSig = '';
+  function ordersCap(list) { const sig = list.length + '|' + (list[0] || {}).orderNo + '|' + orderFilter; if (sig !== ordersSig) { ordersSig = sig; ordersShownN = 120; } return list.slice(0, ordersShownN); }
   function renderOrders() {
     const q = norm($('search').value), dq = dateQuery(q);
     orderItemMap = new Map(items.map(i => [i.key, i]));
@@ -3278,7 +3308,7 @@
       ${ordersLoaded ? orderTotalsBoxHtml(list) : ''}
       ${ordersLoaded && orngOn() ? orngItemsHtml(list) : ''}
       ${!ordersLoaded ? '<div class="loading">Loading orders…</div>'
-        : list.length ? (orderListNos = list.map(o => o.orderNo), orderView === 'timeline' ? orderTimelineHtml(list) : orderView === 'gantt' ? orderGanttHtml(list) : `<div class="order-list">${list.map(orderCard).join('')}</div>`)
+        : list.length ? (orderListNos = list.map(o => o.orderNo), orderView === 'timeline' ? orderTimelineHtml(list) : orderView === 'gantt' ? orderGanttHtml(list) : `<div class="order-list">${ordersCap(list).map(orderCard).join('')}</div>${list.length > ordersShownN ? `<button class="btn ghost" style="width:100%;margin:8px 0" onclick="ordersShownN += 150; render()">Show more orders (${list.length - ordersShownN} more)</button>` : ''}`)
         : `<div class="empty">${orders.length ? 'No matching orders.' : 'No orders yet.<br>Tap <b>＋ New Order</b> to build one from your inventory.'}</div>`}`;
     if (ordersLoaded && list.length && orderView === 'list') {
       const pics = [...new Set(list.flatMap(orderCardPhotos))].map(p => ({ photoId: p }));
@@ -3426,6 +3456,35 @@
       ${contactTotalsHtml(null, ords, { roles: projRoles, xl: `downloadProjectCsv(${esc(JSON.stringify(nm))})` })}
       ${noteBlockHtml([{ t: 'project', ref: normKey(nm), label: nm }], { t: 'project', name: nm })}`);
     if ($('cModal')) $('cModal').dataset.project = projKey(name);
+  }
+  const projNoKey = v => String(v || '').replace(/^\s*#/, '').replace(/\s+/g, '').toLowerCase();
+  async function openProjectNoCard(no) {
+    const k = projNoKey(no); if (!k) return;
+    if (!ordersLoaded) { toast('Loading orders…'); try { await loadOrders(); } catch (e) { return fail(e); } }
+    if (!contactsLoaded) loadContacts().then(() => { const m = $('cModal'); if (m && !m.hidden && m.dataset.projectNo === k) openProjectNoCard(no); }).catch(() => {});
+    ccFromProject = '';
+    const ords = orders.filter(o => projNoKey(o.projectNo) === k).sort((a, b) => String(b.orderDate || '').localeCompare(String(a.orderDate || '')));
+    const jobItems = items.filter(i => projNoKey(i.job) === k || String(i.job || '').split(/[\s,;/]+/).some(j => projNoKey(j) === k));
+    if (!ords.length && !jobItems.length) return toast('Nothing else has project #' + no + '.', true);
+    const names = [...new Set(ords.map(o => String(o.projectName || '').trim()).filter(Boolean))], pms = [...new Set(ords.map(o => o.pm).filter(Boolean))];
+    const cos = [...new Set(ords.map(o => o.vendor).filter(Boolean))], label = names[0] || 'Project #' + no;
+    const byStatus = ['Draft', 'Shipped', 'Cancelled'].map(s => [s, ords.filter(o => o.status === s).length]).filter(x => x[1]);
+    cModal(`<div class="cc-head"><span class="cc-ic">🏗</span><div><h3>Project #${esc(String(no).replace(/^\s*#/, ''))}</h3>
+        <small>${esc([ords.length + ' order' + (ords.length === 1 ? '' : 's'), byStatus.map(([s, n]) => n + ' ' + s.toLowerCase()).join(' · '), jobItems.length ? jobItems.length + ' item' + (jobItems.length === 1 ? '' : 's') + ' on this job' : ''].filter(Boolean).join(' · '))}</small></div>
+        <button class="cm-x" onclick="closeCModal()" aria-label="Close">✕</button></div>
+      ${names.length ? `<div class="cc-line"><span>🏗</span><div><small>Project name${names.length === 1 ? '' : 's'}</small><span class="pc-names">${names.map(n => `<button class="pc-link" onclick="openProjectCard(${esc(JSON.stringify(n))})" data-tip="Every order named ${esc(n)}">${esc(n)} <i>›</i></button>`).join('')}</span></div></div>` : ''}
+      ${pms.length ? `<div class="cc-line"><span>🧑‍💼</span><div><small>PM${pms.length === 1 ? '' : 's'}</small><span class="pc-names">${pms.map(n => projContactLink(n, 'pm', label)).join('')}</span></div></div>` : ''}
+      ${cos.length ? `<div class="cc-line"><span>🏢</span><div><small>Compan${cos.length === 1 ? 'y' : 'ies'} / vendor${cos.length === 1 ? '' : 's'}</small><span class="pc-names">${cos.map(n => projContactLink(n, 'vendor', label)).join('')}</span></div></div>` : ''}
+      ${jobItems.length ? `<details class="cc-items" open><summary>🔧 Items with Assigned Job ${esc(no)} · ${jobItems.length}</summary>
+        ${jobItems.map(i => `<button class="cc-it cc-itbtn" onclick="closeCModal(); openDetail('${esc(i.id)}')"><span>${esc(i.name)}<small>${esc([i.partNumber, [i.location, i.shelf].filter(Boolean).join(' · ')].filter(Boolean).join(' · '))}</small></span>
+          <span><b>${i.quantity}</b><small>available</small></span></button>`).join('')}</details>` : ''}
+      ${ords.length ? contactTotalsHtml(null, ords, { roles: projRoles, xl: `downloadProjectNoCsv(${esc(JSON.stringify(no))})` }) : ''}
+      ${noteBlockHtml([{ t: 'project', ref: normKey(label), label }], { t: 'project', name: label })}`);
+    if ($('cModal')) $('cModal').dataset.projectNo = k;
+  }
+  function downloadProjectNoCsv(no) {
+    const k = projNoKey(no), ords = orders.filter(o => projNoKey(o.projectNo) === k); if (!ords.length) return;
+    ordersCsv(['Project #' + String(no).replace(/^\s*#/, '')], [...new Set(ords.map(o => o.projectName).filter(Boolean))], ords, 'Contact / Company / PM', o => projRoles(o).join(' / ').replace(/[👤🏢🧑‍💼]\s?/gu, ''), 'Project_' + k);
   }
   let ccFromProject = '';
   function projContactLink(text, field, project) {
@@ -3962,6 +4021,25 @@
     try { localStorage.setItem('ordersTotalsMin', oTotalsMin ? '1' : '0'); } catch (e) {  }
     render();
   }
+  const topQtyMode = () => { try { return localStorage.getItem(emoKey('topQty')) === 'cat' ? 'cat' : 'item'; } catch (e) { return 'item'; } };
+  const topQtyBy = () => { try { return localStorage.getItem(emoKey('topQtyBy')) === 'value' ? 'value' : 'qty'; } catch (e) { return 'qty'; } };
+  function setTopQtyMode(m) { try { localStorage.setItem(emoKey('topQty'), m); } catch (e) {  } render(); }
+  function setTopQtyBy(m) { try { localStorage.setItem(emoKey('topQtyBy'), m); } catch (e) {  } render(); }
+  function topQtyHtml(list) {
+    const mode = topQtyMode(), by = topQtyBy(), val = i => by === 'value' ? (i.cost == null ? 0 : i.cost * i.quantity) : i.quantity;
+    const live = list.filter(i => i.quantity > 0 && val(i) > 0), total = live.reduce((n, i) => n + val(i), 0);
+    let rows;
+    if (mode === 'cat') { const g = new Map(); live.forEach(i => { const l = String(i.category || '').trim() || '(no category)', k = catKey(l); const e = g.get(k) || { k, label: l, v: 0, n: 0 }; e.v += val(i); e.n++; g.set(k, e); });
+      rows = [...g.values()].sort((a, b) => b.v - a.v).slice(0, 4).map(c => ({ label: c.label, sub: c.n + ' item' + (c.n === 1 ? '' : 's'), v: c.v, ic: catEmoji({ key: c.k }), go: `toggleCategory(${esc(JSON.stringify(c.k))})` })); }
+    else rows = live.sort((a, b) => val(b) - val(a)).slice(0, 4).map(i => ({ label: i.name, sub: [by === 'value' ? i.quantity.toLocaleString() + ' × ' + money(i.cost) : '', i.location, i.shelf].filter(Boolean).join(' · '), v: val(i), ic: '', go: `openFromList('${esc(i.id)}', listIds)` }));
+    if (rows.length < 2) return '';
+    const max = rows[0].v || 1, fmt = v => by === 'value' ? moneyShort(v) : v.toLocaleString();
+    return `<div class="topq"><div class="topq-h"><span class="topq-seg big"><button class="${by === 'qty' ? 'on' : ''}" onclick="setTopQtyBy('qty')">📦 Most on hand</button><button class="${by === 'value' ? 'on' : ''}" onclick="setTopQtyBy('value')">💲 Most valuable</button></span>
+        <span class="topq-seg"><button class="${mode === 'item' ? 'on' : ''}" onclick="setTopQtyMode('item')">Items</button><button class="${mode === 'cat' ? 'on' : ''}" onclick="setTopQtyMode('cat')">Categories</button></span></div>
+      ${rows.map(r => `<button class="topq-r" onclick="${r.go}" data-tip="${esc(r.label)}: ${by === 'value' ? money(r.v) + ' in stock' : r.v.toLocaleString() + ' available'} · ${total ? Math.round(r.v / total * 100) : 0}% of the total${r.sub ? '\n' + r.sub : ''}">
+        <span class="topq-l">${r.ic ? r.ic + ' ' : ''}${esc(r.label)}</span><span class="topq-t"><i style="width:${Math.max(3, Math.round(r.v / max * 100))}%"></i></span><b>${fmt(r.v)}</b></button>`).join('')}</div>`;
+  }
+  const moneyShort = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + 'M' : v >= 1e4 ? '$' + (v / 1e3).toFixed(1) + 'K' : '$' + Math.round(v).toLocaleString();
   function catTotalsHtml(entries, unit) {
     const g = new Map();
     entries.forEach(({ cat, name, qty }) => { const q = Number(qty) || 0; if (q <= 0) return;
@@ -4049,11 +4127,11 @@
       const n = esc(o.projectName), go = `onclick="event.stopPropagation(); openProjectCard(${esc(JSON.stringify(o.projectName))})"`, d = Math.max(7, Math.round((o.projectName.length * 13 + 360) / 42));
       setTimeout(mqWatch, 0);
       return `<div class="proj mq"><span class="pj-mq" role="button" tabindex="0" ${go} onkeydown="if (event.key === 'Enter') { event.stopPropagation(); openProjectCard(${esc(JSON.stringify(o.projectName))}); }" data-tip="All orders for this project" aria-label="${n}">
-        <span class="pj-mq-t" style="--d:${d}s" aria-hidden="true"><span class="pj-n pj-go">${n}</span><i class="pj-gap"></i><span class="pj-n pj-go">${n}</span><i class="pj-gap"></i></span></span>${o.projectNo ? `<span class="pj-no">#${esc(o.projectNo)}</span>` : ''}</div>`;
+        <span class="pj-mq-t" style="--d:${d}s" aria-hidden="true"><span class="pj-n pj-go">${n}</span><i class="pj-gap"></i><span class="pj-n pj-go">${n}</span><i class="pj-gap"></i></span></span>${o.projectNo ? `<span class="pj-no pj-go" role="button" tabindex="0" onclick="event.stopPropagation(); openProjectNoCard(${esc(JSON.stringify(o.projectNo))})" onkeydown="if (event.key === 'Enter') { event.stopPropagation(); openProjectNoCard(${esc(JSON.stringify(o.projectNo))}); }" data-tip="Every order and item with project #${esc(o.projectNo)}">#${esc(o.projectNo)}</span>` : ''}</div>`;
     }
     return o.projectName ? `<div class="proj ${cls || ''}"><span class="pj-n pj-go" role="button" tabindex="0" onclick="event.stopPropagation(); openProjectCard(${esc(JSON.stringify(o.projectName))})"
-        onkeydown="if (event.key === 'Enter') { event.stopPropagation(); openProjectCard(${esc(JSON.stringify(o.projectName))}); }" data-tip="All orders for this project">${esc(o.projectName)}</span>${o.projectNo ? `<span class="pj-no">#${esc(o.projectNo)}</span>` : ''}</div>`
-      : `<div class="proj none ${cls || ''}"><span class="pj-n">No project</span>${o.projectNo ? `<span class="pj-no">#${esc(o.projectNo)}</span>` : ''}</div>`;
+        onkeydown="if (event.key === 'Enter') { event.stopPropagation(); openProjectCard(${esc(JSON.stringify(o.projectName))}); }" data-tip="All orders for this project">${esc(o.projectName)}</span>${o.projectNo ? `<span class="pj-no pj-go" role="button" tabindex="0" onclick="event.stopPropagation(); openProjectNoCard(${esc(JSON.stringify(o.projectNo))})" onkeydown="if (event.key === 'Enter') { event.stopPropagation(); openProjectNoCard(${esc(JSON.stringify(o.projectNo))}); }" data-tip="Every order and item with project #${esc(o.projectNo)}">#${esc(o.projectNo)}</span>` : ''}</div>`
+      : `<div class="proj none ${cls || ''}"><span class="pj-n">No project</span>${o.projectNo ? `<span class="pj-no pj-go" role="button" tabindex="0" onclick="event.stopPropagation(); openProjectNoCard(${esc(JSON.stringify(o.projectNo))})" onkeydown="if (event.key === 'Enter') { event.stopPropagation(); openProjectNoCard(${esc(JSON.stringify(o.projectNo))}); }" data-tip="Every order and item with project #${esc(o.projectNo)}">#${esc(o.projectNo)}</span>` : ''}</div>`;
   }
   function orderCard(o) {
     const where = [o.fromLocation, o.toLocation].filter(Boolean).join(' → ');
@@ -5420,6 +5498,39 @@
   const catPrice = c => c == null ? null : Math.round(c * (1 + catPct() / 100) * 100) / 100;
   const catPctOf = i => { const v = (cat.pctItem || {})[i.key]; const n = Number(v); return v !== undefined && v !== '' && isFinite(n) ? Math.max(-100, Math.min(1000, n)) : catPct(); };
   const catPriceOf = i => i.cost == null ? null : Math.round(i.cost * (1 + catPctOf(i) / 100) * 100) / 100;
+  function catPlHtml(i) {
+    if (i.cost == null) return '';
+    const price = catPriceOf(i), q = catQtyOf(i), per = Math.round((price - i.cost) * 100) / 100, tot = Math.round(per * q * 100) / 100;
+    if (!per) return `<small class="cat-pl even">At cost · no profit</small>`;
+    const up = per > 0, margin = price ? Math.round(per / price * 1000) / 10 : 0;
+    return `<small class="cat-pl ${up ? 'up' : 'down'}">${up ? '💹 Profit' : '🏷 Discount'} <b>${up ? '+' : '−'}${money(Math.abs(per))}</b> ea${q > 1 ? ` · <b>${up ? '+' : '−'}${money(Math.abs(tot))}</b> for ${q}` : ''}${up ? ` · ${margin}% margin` : ` · ${Math.abs(catPctOf(i))}% off cost`}</small>`;
+  }
+  const catExtras = () => Array.isArray(cat.extras) ? cat.extras : (cat.extras = []);
+  function catTotalHtml(value) {
+    const ex = catExtras(), sum = ex.reduce((n, x) => n + (Number(x.amount) || 0), 0);
+    return `<div class="cat-total" id="catTotal"><div class="ct-row"><span>Items</span><b>${money(value)}</b></div>
+      ${ex.map((x, i) => `<div class="ct-x"><input class="field" maxlength="80" placeholder="e.g. Freight, Install, Permit" value="${esc(x.label || '')}" oninput="catExtraSet(${i}, 'label', this.value)">
+        <span class="ct-amt">$<input class="field" inputmode="decimal" placeholder="0.00" value="${x.amount === '' || x.amount == null ? '' : esc(x.amount)}" oninput="catExtraSet(${i}, 'amount', this.value)" onblur="renderCatalog()"></span>
+        <button class="cat-x" onclick="catExtraDel(${i})" aria-label="Remove this cost">✕</button></div>`).join('')}
+      <button class="ct-add" onclick="catExtraAdd()">＋ Additional cost</button>
+      <div class="ct-row ct-grand"><span>Total${ex.length ? ' with additional costs' : ''}</span><b id="catGrand">${money(value + sum)}</b></div>
+      <small>Shown on the PDF and on screen.</small></div>`;
+  }
+  function catExtraAdd() { catExtras().push({ label: '', amount: '' }); saveCat(); renderCatalog(); requestAnimationFrame(() => { const l = document.querySelectorAll('#catTotal .ct-x input'); const f = l[l.length - 2]; if (f) f.focus(); }); }
+  function catExtraDel(i) { catExtras().splice(i, 1); saveCat(); renderCatalog(); }
+  function catExtraSet(i, k, v) {
+    const x = catExtras()[i]; if (!x) return;
+    x[k] = k === 'amount' ? (String(v).trim() === '' ? '' : (n => isFinite(n) ? n : x.amount)(Number(String(v).replace(/[$,\s]/g, '')))) : String(v).slice(0, 80);
+    saveCat();
+    const g = $('catGrand'); if (g) { let value = 0; catalogGroups(true).forEach(gr => gr.list.forEach(it => { if (it.cost != null) value += catPriceOf(it) * catQtyOf(it); }));
+      g.textContent = money(value + catExtras().reduce((n, y) => n + (Number(y.amount) || 0), 0)); }
+  }
+  function catPlTotalHtml() {
+    let cost = 0, sale = 0;
+    catalogGroups(true).forEach(g => g.list.forEach(i => { if (i.cost == null) return; const q = catQtyOf(i); cost += i.cost * q; sale += catPriceOf(i) * q; }));
+    const d = Math.round((sale - cost) * 100) / 100; if (!d) return '';
+    return `<span class="cat-pl-tot ${d > 0 ? 'up' : 'down'}"><b>${d > 0 ? '+' : '−'}${money(Math.abs(d))}</b> ${d > 0 ? `profit · ${sale ? Math.round(d / sale * 1000) / 10 : 0}% margin` : 'discount'} <small>(cost ${money(cost)})</small></span>`;
+  }
   function setCatItemPct(key, v) {
     const m = Object.assign({}, cat.pctItem);
     if (v === '' || v == null) delete m[key]; else m[key] = Number(v);
@@ -5540,7 +5651,7 @@
     const show = () => { const i = (catSaved || []).findIndex(x => x.id === id); if (i < 0) return; if (i >= 4) catSavedAll = true; renderCatSaved(); const el = document.querySelector('.cat-notes'); if (el) el.scrollIntoView({ block: 'center' }); };
     if (catSaved) setTimeout(show, 50); else setTimeout(function wait(n) { catSaved ? show() : n < 40 && setTimeout(() => wait(n + 1), 150); }, 150, 0);
   }
-  const CAT_KEYS = ['title', 'cats', 'off', 'qty', 'extra', 'inStockOnly', 'showPhotos', 'showQty', 'showCost', 'pct', 'pctItem', 'sales', 'headline', 'validTo', 'contact', 'forContact', 'design'];
+  const CAT_KEYS = ['title', 'cats', 'off', 'qty', 'extra', 'inStockOnly', 'showPhotos', 'showQty', 'showCost', 'pct', 'pctItem', 'sales', 'headline', 'validTo', 'contact', 'forContact', 'design', 'extras'];
   function renderCatSaved() {
     if (!$('catSaved')) return;
     if (catSaved === null) { $('catSaved').innerHTML = '<div class="muted-note">Loading saved catalogs…</div>'; return; }
@@ -5604,7 +5715,8 @@
         <small>${pct ? `Each item shows its Cost Price ${pct > 0 ? 'plus' : 'minus'} ${Math.abs(pct)}%. The percent itself isn’t printed on the PDF.` : 'Shows the Cost Price as it is. Type a percent to mark it up (or a minus number for a discount).'}
           Any item can have its own percent: the small % box next to its price below (blank = this one).</small></div>` : ''}
       <div class="cat-sum"><span><b>${n}</b> item${n === 1 ? '' : 's'} · ${picked.length} categor${picked.length === 1 ? 'y' : 'ies'}</span>
-        <span><b>${units.toLocaleString()}</b> qty</span>${cat.showCost ? `<span><b>${money(value)}</b> ${pct ? 'at these prices' : 'at cost'}</span>` : ''}</div>
+        <span><b>${units.toLocaleString()}</b> qty</span>${cat.showCost ? `<span><b>${money(value)}</b> ${pct ? 'at these prices' : 'at cost'}</span>${catPlTotalHtml()}` : ''}</div>
+      ${cat.showCost ? catTotalHtml(value) : ''}
       <div class="section-title">Design</div>
       <div class="cat-designs">${CAT_DESIGNS.map(([id, label, note, acc, bg]) => `<button class="cat-design ${catDesign() === id ? 'on' : ''}" onclick="setCatDesign('${id}')" aria-pressed="${catDesign() === id}">
         <span class="cd-smp cd-${id}" style="--acc:${acc};--bg:${bg}"><i></i><i></i><i></i></span><b>${label}${catDesign() === id ? ' ✓' : ''}</b><small>${note}</small></button>`).join('')}</div>
@@ -5621,7 +5733,7 @@
             ${cat.showCost && i.cost != null ? (() => { const own = (cat.pctItem || {})[i.key] !== undefined && (cat.pctItem || {})[i.key] !== '', ip = catPctOf(i);
               return `<small class="pr"><span class="pr-v">${money(catPriceOf(i))}</span>${ip ? ` <s>${money(i.cost)}</s>` : ''} ea
               <label class="ipct-l ${own ? 'own' : ''}" title="This item's percent (blank = ${pct}% like the rest)"><input class="ipct" type="number" inputmode="decimal" step="1" min="-100" max="1000"
-                value="${own ? esc(cat.pctItem[i.key]) : ''}" placeholder="${pct}" oninput="setCatItemPct(${k}, this.value)" onblur="renderCatalog()" aria-label="Percent for ${esc(i.name)}">%</label></small>`; })() : ''}</span>
+                value="${own ? esc(cat.pctItem[i.key]) : ''}" placeholder="${pct}" oninput="setCatItemPct(${k}, this.value)" onblur="renderCatalog()" aria-label="Percent for ${esc(i.name)}">%</label></small>${catPlHtml(i)}`; })() : ''}</span>
           <span class="qstep"><button onclick="catQty(${k}, -1)" aria-label="One less">−</button><input type="number" inputmode="numeric" min="0" value="${catQtyOf(i)}"
             onchange="catQtySet(${k}, this.value)" aria-label="Quantity"><button onclick="catQty(${k}, 1)" aria-label="One more">+</button></span>
           ${extra ? `<button class="cat-x" onclick="catRemoveExtra(${k})" aria-label="Remove">✕</button>` : ''}</div>`; }).join('')).join('')
@@ -5641,7 +5753,7 @@
     const groups = catalogGroups(true);
     return { title: cat.title || 'Catalog', design: catDesign(), showPhotos: cat.showPhotos, showQty: cat.showQty, showCost: cat.showCost,
       priceLabel: catPct() || Object.keys(cat.pctItem || {}).length ? 'list' : 'cost',
-      sales: !!cat.sales, headline: cat.headline || '', validTo: cat.validTo || '', contact: cat.contact || '',
+      sales: !!cat.sales, headline: cat.headline || '', validTo: cat.validTo || '', contact: cat.contact || '', extras: catExtras().filter(x => x.label && Number(x.amount)),
       preparedFor: cat.sales && cat.forContact ? [cat.forContact.name, cat.forContact.company].filter(Boolean).join(' · ') : '',
       settings: JSON.stringify(Object.fromEntries(CAT_KEYS.map(k => [k, cat[k]]))),
       groups: groups.map(g => ({ name: g.c.label, items: g.list.map(i => ({ name: i.name, partNumber: i.partNumber, manufacturer: i.manufacturer, specs: specsLine(i),
@@ -6173,7 +6285,7 @@
       </div>`;
     const blocks = {
       details: `<dl class="facts tiles" style="margin:12px 0">
-        ${fact('Order Date', fmtDay(o.orderDate))}${fact('Project #', o.projectNo)}
+        ${fact('Order Date', fmtDay(o.orderDate))}${o.projectNo ? factTile('Project #', `<button class="ct-link" onclick="openProjectNoCard(${esc(JSON.stringify(o.projectNo))})" data-tip="Every order and item with this project #">#${esc(o.projectNo)} <span aria-hidden="true">🏗</span></button>`) : ''}
         ${fact('Activity Type', o.activityType)}${fact('From', o.fromLocation)}${fact('To', o.toLocation)}
         ${contactFactHtml('Point of Contact', o.contact, 'contact')}${contactFactHtml('Freight Service', o.freight, 'freight')}${contactFactHtml('Company / Vendor', o.vendor, 'vendor')}
         ${contactFactHtml('PM', o.pm, 'pm')}
@@ -6330,169 +6442,4 @@
     if ($('sheet').dataset.panel !== 'tracker') return;
     trk = Object.assign(r, { kind: 'return', past, isPo: !!(past ? retKind === 'po' : rcvDone.done.mode === 'po'), autoAudit: r.head.audit });
     renderTracker();
-  }
-  function trkSelect(list, value, onchange, label, blank) {
-    const opts = (value && !list.includes(value) ? [value] : []).concat(list);
-    return `<select class="field" aria-label="${esc(label)}" onchange="${onchange}">
-      <option value="">${esc(blank)}</option>${opts.map(p => `<option${p === value ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>`;
-  }
-  function trkHeadField(k, label) {
-    const v = trk.head[k] ?? '', set = `trk.head.${k}=this.value`;
-    if (k === 'date') return `<label>${label}<input type="date" class="field" value="${esc(v)}" onchange="trkDate(this.value)"></label>`;
-    if (k === 'audit') return `<label>${label}<input id="trkAudit" class="field" maxlength="500" value="${esc(v)}" oninput="${set}"></label>`;
-    if (k === 'activity' && trk.activities.length) return `<label>${label}${trkSelect(trk.activities, v, set, label, 'Pick one')}</label>`;
-    if (k === 'service' && trk.services.length) return `<label>${label}${trkSelect(trk.services, v, set, label, '(blank)')}</label>`;
-    return `<label>${label}<input class="field" maxlength="500" value="${esc(v)}" oninput="${set}"></label>`;
-  }
-  function trkDate(day) {
-    if (trk.head.audit === trk.autoAudit) { trk.head.audit = trk.autoAudit = trackerAudit(day); if ($('trkAudit')) $('trkAudit').value = trk.head.audit; }
-    trk.head.date = day;
-  }
-  function renderTracker() {
-    const r = trk, no = r.orderNo, ret = r.kind === 'return';
-    const what = r.isPo ? 'PO received' + (r.po ? ' · PO ' + r.po : '') + (r.vendor ? ' · from ' + r.vendor : '')
-      : ret ? 'Returned inventory' + (no ? ' · ' + no : '') + (r.head.from ? ' · from ' + r.head.from : '') : no;
-    const line = (l, i) => `<div class="trk-line">
-      <div class="trk-name">${esc(l.name)}${l.partNumber ? ` <span class="muted">${esc(l.partNumber)}</span>` : ''}</div>
-      <label class="${l.product ? '' : 'trk-need'}">Product${r.products.length
-        ? trkSelect(r.products, l.product, `trkProduct(${i}, this)`, 'Product for ' + l.name, 'No product (QB Non-inventory)')
-        : `<input class="field" maxlength="500" value="${esc(l.product)}" oninput="trk.lines[${i}].product=this.value">`}</label>
-      <div class="trk-two">
-        <label>${ret ? 'Qty' : 'Shipped Qty'}<input class="field" type="number" min="0" step="1" inputmode="numeric" value="${esc(l.qty)}" oninput="trk.lines[${i}].qty=this.value"></label>
-        <label>Original Job #<input class="field" maxlength="500" value="${esc(l.job)}" oninput="trk.lines[${i}].job=this.value"></label>
-      </div>
-      <label>Notes<input class="field" maxlength="500" value="${esc(l.notes)}" oninput="trk.lines[${i}].notes=this.value"></label>
-      <label>Network Code<input class="field" maxlength="500" value="${esc(l.network)}" oninput="trk.lines[${i}].network=this.value" placeholder="Endpoints"></label>
-    </div>`;
-    openSheet(`<h2 style="margin-bottom:2px">🧾 Log entry in tracker</h2>
-      <div class="muted-note" style="padding:0 0 6px">${esc(what)} · One row per item goes at the top of
-        <a href="${esc(r.url)}" target="_blank" rel="noopener">Supply Chain 2026 → Shipping ↗</a>. Nothing is added until you tap <b>Add to tracker</b>.</div>
-      ${r.logged ? `<div class="pm-warn">This ${r.isPo ? 'PO' : ret ? 'return' : 'order'} is already in the tracker: ${esc(trackerText(r.logged).replace(/^🧾 Logged in the tracker /, ''))}. Adding again makes a second set of rows.</div>` : ''}
-      ${trkSourceHtml()}
-      <div class="trk-head">${TRK_HEAD.map(([k, label]) => trkHeadField(k, label)).join('')}</div>
-      <h3 class="trk-h">${r.lines.length} item${r.lines.length === 1 ? '' : 's'} <span class="trk-miss" id="trkMiss">${trkMissText()}</span></h3>
-      ${r.lines.map(line).join('')}
-      <div class="sticky-foot">
-        <button class="btn ghost" onclick="${ret ? (r.past ? 'openReturns(true)' : 'showRcvDone()') : `openOrder('${esc(no)}')`}">Back</button>
-        <button class="btn primary" id="trkAdd" onclick="sendTracker()">Add to tracker</button>
-      </div>`);
-    $('sheet').dataset.panel = 'tracker';
-  }
-  let trkSrcOpen = true;
-  function copyVal(text, what) {
-    const t = String(text ?? ''); if (!t) return;
-    const done = () => toast('📋 Copied' + (what ? ' ' + what : '') + ': ' + (t.length > 40 ? t.slice(0, 40) + '…' : t));
-    const old = () => { const a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
-      document.body.appendChild(a); a.select(); try { document.execCommand('copy'); done(); } catch (e) { toast('Couldn’t copy here. Press and hold the text to copy it.', true); } a.remove(); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, old); else old();
-  }
-  function trkSource() {
-    const r = trk, ret = r.kind === 'return', o = !ret && orderByNo(r.orderNo);
-    const src = ret ? (r.past || (rcvDone && rcvDone.done) || {}) : (o || {});
-    const day = v => v ? fmtDay(v) : '';
-    const facts = ret ? [r.isPo ? ['PO #', src.po || r.po] : ['Returned from', src.from], r.isPo ? ['Vendor', src.vendor || r.vendor] : ['Order #', src.orderNo],
-        !r.isPo && ['Vendor / company', src.vendor], ['PM', src.pm], ['Point of contact', src.contact], !r.isPo && ['Reason', src.reason], ['Note', src.note],
-        ['Received', src.timestamp ? when(src.timestamp) : ''], ['By', src.user ? personName(src.user) : '']]
-      : [['Order #', o.orderNo || r.orderNo], ['Project name', o.projectName], ['Project #', o.projectNo], ['Activity type', o.activityType], ['PM', o.pm],
-        ['Point of contact', o.contact], ['Company / vendor', o.vendor], ['Freight', o.freight], ['From', o.fromLocation], ['To', o.toLocation], ['Ship to', o.shipTo],
-        ['Order date', day(o.orderDate)], ['Ship date', day(o.shipDate)], ['Delivery date', day(o.deliveryDate)]];
-    const lines = (r.lines || []).map(l => ({ name: l.name, part: l.partNumber, qty: l.qty, job: l.job, ep: l.network }));
-    const files = ret ? (src.links || []).map(l => ['🔗 ' + (l.label || 'Link'), l.url]).concat((src.pdfs || []).map(f => [(f.kind === 'photo' ? '📷 ' : '📄 ') + f.name, f.url])) : [];
-    return { facts: facts.filter(x => x && x[1] != null && String(x[1]).trim() !== ''), lines, files };
-  }
-  function trkSourceHtml() {
-    const s = trkSource(), chip = (v, what) => `<button type="button" class="cp-chip" onclick="copyVal(${esc(JSON.stringify(String(v)))}, ${esc(JSON.stringify(what || ''))})" title="Tap to copy">${esc(v)}<i aria-hidden="true">⧉</i></button>`;
-    return `<details class="trk-src" ${trkSrcOpen ? 'open' : ''} ontoggle="trkSrcOpen = this.open">
-      <summary><b>📋 What you're logging</b><small>Tap any value to copy it</small></summary>
-      <div class="trk-src-b">
-        ${s.facts.map(([k, v]) => `<div class="cp-row"><span>${esc(k)}</span>${chip(v, k)}</div>`).join('')}
-        ${s.lines.length ? `<div class="cp-h">Items · ${s.lines.length}</div>${s.lines.map(l => `<div class="cp-item"><div class="cp-in">${chip(l.name, 'name')}</div>
-          <div class="cp-meta">${l.part ? `<span>Part #</span>${chip(l.part, 'part #')}` : ''}<span>Qty</span>${chip(l.qty, 'qty')}${l.job ? `<span>Job</span>${chip(l.job, 'job #')}` : ''}${l.ep ? `<span>Endpoints</span>${chip(l.ep, 'endpoints')}` : ''}</div></div>`).join('')}` : ''}
-        ${s.files.length ? `<div class="cp-h">Attached</div><div class="cp-files">${s.files.map(([n, u]) => `<span class="cp-file"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(n)}</a><button type="button" onclick="copyVal(${esc(JSON.stringify(u))}, 'link')" aria-label="Copy the link">⧉</button></span>`).join('')}</div>` : ''}
-        <button type="button" class="btn ghost cp-all" onclick="trkCopyAll()">📋 Copy all as text</button>
-      </div></details>`;
-  }
-  function trkCopyAll() {
-    const s = trkSource();
-    copyVal(s.facts.map(([k, v]) => k + ': ' + v).concat(s.lines.length ? ['', 'Items:'] : [], s.lines.map(l => `${l.qty} × ${l.name}${l.part ? ' (' + l.part + ')' : ''}${l.job ? ' · Job ' + l.job : ''}${l.ep ? ' · ' + l.ep : ''}`),
-      s.files.length ? ['', 'Attached:'] : [], s.files.map(([n, u]) => n.replace(/^\S+ /, '') + ' ' + u)).join('\n'), 'everything');
-  }
-  const trkMissText = () => { const n = trk.lines.filter(l => !l.product).length; return n ? '· ' + n + ' without a Product' : ''; };
-  function trkProduct(i, el) {
-    trk.lines[i].product = el.value;
-    el.closest('label').classList.toggle('trk-need', !el.value);
-    $('trkMiss').textContent = trkMissText();
-  }
-  async function sendTracker() {
-    if (viewOnly() || !trk) return;
-    const no = trk.orderNo, lines = trk.lines.filter(l => Number(l.qty) > 0);
-    if (!trk.head.date) return toast('Pick the date', true);
-    if (trk.activities.length && !trk.head.activity) return toast('Pick the activity type', true);
-    if (!lines.length) return toast('There are no items with a quantity to log', true);
-    const none = lines.filter(l => !l.product).length;
-    if (!confirm(`Add ${lines.length} row${lines.length === 1 ? '' : 's'} to the top of the Shipping tab?`
-      + (none ? `\n\n${none} item${none === 1 ? ' has' : 's have'} no Product, so QB Roll up will say QB Non-inventory.` : '')
-      + (trk.logged || (trk.kind === 'return' && !trk.past && rcvDone && rcvDone.logged)
-        ? `\n\nThis ${trk.isPo ? 'PO' : trk.kind === 'return' ? 'return' : 'order'} is already in the tracker.` : ''))) return;
-    $('trkAdd').disabled = true;
-    try {
-      if (trk.kind === 'return') {
-        const res = await api('logReturnInTracker', trk.adjIds, trk.head, lines), past = trk.past;
-        trk = null;
-        if (past) { past.tracker = res.logged; openReturns(true); }
-        else { if (rcvDone) rcvDone.logged = res.logged; showRcvDone(); }
-        return botCelebrate(`Logged in the tracker · ${res.rows} row${res.rows === 1 ? '' : 's'}`);
-      }
-      const res = await api('logOrderInTracker', no, trk.head, lines);
-      const o = orderByNo(no);
-      if (o) o.tracker = res.logged;
-      trk = null;
-      openOrder(no);
-      botCelebrate(`Logged in the tracker · ${res.rows} row${res.rows === 1 ? '' : 's'}`);
-    } catch (e) { if ($('trkAdd')) $('trkAdd').disabled = false; fail(e); }
-  }
-  function parseMoney(v) {
-    const t = String(v ?? '').trim();
-    if (!t) return null;
-    const n = Number(t.replace(/[$,\s]/g, ''));
-    return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : undefined;
-  }
-  const extraOf = o => Number(o && o.extraCost) || 0;
-  const orderTotal = o => (Number(o.ourCost) || 0) + (Number(o.shippingCost) || 0) + extraOf(o);
-  function grandTotalHtml(ourCost, ship, extras) {
-    extras = extras || [];
-    const extra = extras.reduce((n, c) => n + (Number(c.amount) || 0), 0);
-    if (!ship && !extras.length) return '';
-    return `<div class="ototals grand" style="margin-top:6px">${extras.length ? `<span>Additional <b style="font-size:15px">${money(extra)}</b></span>` : ''}
-      ${ship ? `<span>Shipping <b style="font-size:15px">${money(ship)}</b></span>` : ''}
-      <span>Total <b>${money((ourCost || 0) + (ship || 0) + extra)}</b></span></div>`;
-  }
-  function costsHtml(o) {
-    const list = o.extraCosts || [], no = esc(o.orderNo), sum = extraOf(o);
-    return (list.length ? `<div class="section-title">Additional costs · ${list.length}</div>` + list.map(c => `<div class="track xcost">
-        <span style="flex:1;min-width:0"><div class="lab">${esc(c.label)}</div><b style="font-size:17px">${money(c.amount)}</b></span>
-        ${cantChange() ? '' : `<button onclick="editCost('${no}', '${esc(c.id)}')">Edit</button>`}</div>`).join('')
-        + (list.length > 1 ? `<div class="xcost-sum"><span>Additional costs total</span><b>${money(sum)}</b></div>` : '') : '')
-      + (cantChange() ? '' : `<button class="attach-btn" onclick="editCost('${no}')">➕ Add ${list.length ? 'another' : 'an additional'} cost</button>`);
-  }
-  function editCost(no, id) {
-    if (viewOnly()) return;
-    const o = orderByNo(no), c = id ? (o.extraCosts || []).find(x => x.id === id) : null;
-    if (id && !c) return toast('That cost was removed', true);
-    const used = [...new Set(orders.flatMap(x => (x.extraCosts || []).map(k => k.label)))].sort();
-    $('costBox').innerHTML = `<div class="section-title">${c ? 'Change additional cost' : 'Add an additional cost'}</div>
-      <label>What is it for?</label>
-      <input class="field" id="costLabel" maxlength="100" list="costLabels" autocomplete="off" placeholder="e.g. Crane rental, Permit, Install labor" value="${esc(c ? c.label : '')}">
-      <datalist id="costLabels">${used.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
-      <label>Amount</label>
-      <div class="track-edit">
-        <input class="field" id="costAmt" inputmode="decimal" placeholder="$0.00" value="${c ? esc(c.amount) : ''}"
-          onkeydown="if (event.key === 'Enter') saveCost('${esc(no)}', '${esc(id || '')}')">
-        <button class="btn primary" id="costSave" onclick="saveCost('${esc(no)}', '${esc(id || '')}')">Save</button>
-      </div>
-      <div style="display:flex;gap:16px;margin-top:6px">
-        <button style="background:none;border:0;color:var(--muted);padding:6px 0" onclick="$('costBox').innerHTML = costsHtml(orderByNo('${esc(no)}'))">Cancel</button>
-        ${c ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:6px 0" onclick="removeCost('${esc(no)}', '${esc(id)}')">Remove</button>` : ''}
-      </div>`;
-    setTimeout(() => $('costLabel') && $(c ? 'costAmt' : 'costLabel').focus(), 50);
   }
