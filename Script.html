@@ -557,14 +557,7 @@
     if (hide && $('showUiLogo')) {
       const g = loaderLogo() !== 'mark' ? document.querySelector('header .bot') : document.querySelector('#busyBolt svg.b');
       $('showUiLogo').innerHTML = g ? g.outerHTML : '';
-      $('showUiNav').innerHTML = `<button class="sui-cmt" id="suiFind" onclick="toggleBarSearch()" aria-label="Search items and orders" title="Search items and orders">🔍</button>` +
-        `<button class="sui-cmt" onclick="openAllTags()" aria-label="All tags" title="All tags">🏷</button><span class="pin-bar" id="suiPins"></span><span class="sui-sep"></span>` +
-        [...document.querySelectorAll('nav > button')].filter(b => !b.hidden).map(b => {
-        const label = b.textContent.replace(b.querySelector('.ico').textContent, '').trim();
-        return `<button ${b.dataset.tab ? `data-tab="${esc(b.dataset.tab)}"` : 'class="sui-scan"'} onclick="${esc(b.getAttribute('onclick'))}"
-          class="${b.classList.contains('active') ? 'active' : ''}" aria-label="${esc(label)}" title="${esc(label)}">${esc(b.querySelector('.ico').textContent)}</button>`;
-      }).join('') + `<span class="sui-sep"></span><button class="sui-cmt" id="suiBell" onclick="openNotifications()" aria-label="All comments" title="All comments">🔔<span class="sui-badge red" id="suiBellBadge" hidden></span></button>` +
-        `<button class="sui-cmt" id="suiCmt" onclick="openMyComments()" aria-label="My comments and mentions" title="My comments and mentions">💬<span class="sui-badge" id="suiBadge" hidden></span></button>` +
+      $('showUiNav').innerHTML = suiButtons().map(k => SUI_BTN[k] ? SUI_BTN[k]() : '').join('') +
         `<button class="sui-mini-t" id="suiMiniT" onclick="toggleSuiMini()"></button>` +
         `<button class="sui-me" id="suiMe" onclick="openProfile()" aria-label="My profile and settings" title="My profile and settings">${avatarHtml()}</button>`;
       showBell(); renderPins(); applySuiMini();
@@ -1094,6 +1087,7 @@
       const sig = p ? p.all + '|' + p.me : '';
       if (pulseLast !== null && sig !== pulseLast) loadNotifications();
       if (pulseLast === null || sig !== pulseLast) loadTfix();
+      if (pulseLast !== null && sig !== pulseLast && $('ncBox')) loadNoteCmts($('ncBox').dataset.note);
       pulseLast = sig;
     }).catch(() => { pulseFails++; }).then(() => { pulseBusy = false; });
   }
@@ -1560,8 +1554,19 @@
     const e = pinEmos()[freeKey(p)];
     if (e) return emojiHtml(e, 'pin-emo');
     const nv = pinNatives()[freeKey(p)];
-    if (nv) return `<span class="pin-nat">${esc(nv)}</span>`;
+    if (!p.tag && p.t === 'order' && (nv === '$total' || (!nv && !e && pinOrderTotals()))) { const o = orderByNo(p.ref);
+      if (o) return `<span class="pin-tot st-${esc(o.status)}" title="${esc(o.orderNo)} · ${esc(money(orderTotal(o)))}">${esc(pinMoney(orderTotal(o)))}</span>`; }
+    if (nv && nv !== '$total') return `<span class="pin-nat">${esc(nv)}</span>`;
     return p.tag ? esc(String(p.label).trim().charAt(0).toUpperCase() || '#') : `<span class="pin-nat">${p.ic || '📌'}</span>`;
+  }
+  const pinOrderTotals = () => { try { return localStorage.getItem(emoKey('pinOrderTotals')) === '1'; } catch (e) { return false; } };
+  function setPinOrderTotals(v) { try { localStorage.setItem(emoKey('pinOrderTotals'), v ? '1' : '0'); } catch (e) {  } renderPins(); if ($('sheet').dataset.panel === 'profile') { const t = $('sheet').scrollTop; renderProfile(); $('sheet').scrollTop = t; } toast(v ? '💲 Order pins show their total' : 'Order pins back to their icons'); }
+  const pinMoney = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? '$' + Math.round(v / 1e3) + 'K' : v >= 1e3 ? '$' + (v / 1e3).toFixed(1) + 'K' : '$' + Math.round(v);
+  function setPinTotal(ref) {
+    const k = freeKey(pinRefObj(ref));
+    if (!setPinNativeData(k, '$total')) return toast('Couldn’t save that on this device.', true);
+    const m = pinEmos(); if (delete m[k]) try { localStorage.setItem(emoKey('pinEmojis'), JSON.stringify(m)); } catch (e) {  }
+    setPinPicData(k, null); pinEmoOpen = ''; renderPins(); pinCardRefresh(); toast('💲 The order total is the pin');
   }
   function pinRefObj(ref) { return ref[0] === 'tag' ? Object.assign({ tag: true }, tagPins[pinIndex(ref)] || { kind: ref[1], key: ref[2] }) : pins[pinIndex(ref)] || { t: ref[0], ref: ref[1] }; }
   let pinEmoOpen = '';
@@ -1972,6 +1977,50 @@
     if ($('suiLookBox')) $('suiLookBox').outerHTML = suiLookHtml();
     toast('Floating menu back to the original look');
   }
+  const SUI_ALL = [['search', '🔍', 'Search'], ['tags', '🏷', 'All tags'], ['pins', '📌', 'Your pins'], ['sep1', '│', 'Divider'],
+    ['all', '📦', 'Items'], ['in', '✅', 'In Stock'], ['orders', '🚚', 'Orders'], ['reports', '📊', 'Reports'], ['log', '🕘', 'Activity'], ['rcv', '📥', 'Receive a PO · returns'], ['custom', '⭐', 'Your button'],
+    ['sep2', '│', 'Divider'], ['bell', '🔔', 'All comments'], ['cmt', '💬', 'My comments']];
+  const suiKey = () => 'suiOrder:' + String(me && me.email || '').toLowerCase();
+  const SUI_ACTS = [['emoji', '😀', 'Emoji creator', "openProfileSection('emoji')"], ['note', '📝', 'New note', "openMyNotes(); newMyNote()"], ['notes', '📒', 'My notes', 'openMyNotes()'],
+    ['order', '🚚', 'New order', 'newOrder()', () => canSee('orders') && canEdit()], ['item', '📦', 'New item', 'openForm()', () => canEdit()],
+    ['scanadj', '▦', 'Scan to adjust stock', 'scanToAdjust()', () => canSee('stock') && canEdit()], ['returns', '↩️', 'Past returns', "openReturns(false, 'return')", () => canSee('stock')],
+    ['pos', '📥', 'Past POs received', "openReturns(false, 'po')", () => canSee('stock')], ['adjs', '🔢', 'Stock adjustments', 'openAdjustments()', () => canSee('stock')],
+    ['contacts', '👥', 'Contacts', 'openContacts()', () => canSee('contacts')], ['catalog', '📒', 'Catalog', 'openCatalog()', () => canSee('reports')],
+    ['count', '🧮', 'Count sheet', 'openCountGrid()', () => cgAccess()], ['ask', '🤖', 'Ask Supplybot', 'openAskBot()', () => canAskBot()],
+    ['profile', '⚙', 'My profile', 'openProfile()']];
+  const suiCustomKey = () => 'suiCustom:' + String(me && me.email || '').toLowerCase();
+  const suiCustomAct = () => { let k = 'emoji'; try { k = localStorage.getItem(suiCustomKey()) || 'emoji'; } catch (e) {  } return SUI_ACTS.find(a => a[0] === k) || SUI_ACTS[0]; };
+  function setSuiCustom(k) { try { localStorage.setItem(suiCustomKey(), k); } catch (e) {  } suiSave(suiOrder()); const a = suiCustomAct(); toast(`⭐ Your button: ${a[1]} ${a[2]}`); }
+  function suiOrder() { try { const v = JSON.parse(localStorage.getItem(suiKey())); if (v && Array.isArray(v.order)) { const known = SUI_ALL.map(x => x[0]), o = v.order.filter(k => known.includes(k)); known.forEach((k, i) => { if (!o.includes(k)) o.splice(Math.min(i, o.length), 0, k); }); return { order: o, off: (v.off || []).filter(k => known.includes(k)) }; } } catch (e) {  } return { order: SUI_ALL.map(x => x[0]), off: [] }; }
+  const suiButtons = () => { const s = suiOrder(); return s.order.filter(k => !s.off.includes(k)); };
+  const suiTab = t => { const b = document.querySelector(`nav > button[data-tab="${t}"]`); if (!b || b.hidden) return ''; const ico = b.querySelector('.ico').textContent, label = b.textContent.replace(ico, '').trim();
+    return `<button data-tab="${esc(t)}" onclick="${esc(b.getAttribute('onclick'))}" class="${b.classList.contains('active') ? 'active' : ''}" aria-label="${esc(label)}" title="${esc(label)}">${esc(ico)}</button>`; };
+  const SUI_BTN = {
+    search: () => `<button class="sui-cmt" id="suiFind" onclick="toggleBarSearch()" aria-label="Search items and orders" title="Search items and orders">🔍</button>`,
+    tags: () => `<button class="sui-cmt" onclick="openAllTags()" aria-label="All tags" title="All tags">🏷</button>`,
+    pins: () => `<span class="pin-bar" id="suiPins"></span>`,
+    sep1: () => `<span class="sui-sep"></span>`, sep2: () => `<span class="sui-sep"></span>`,
+    all: () => suiTab('all'), in: () => suiTab('in'), orders: () => suiTab('orders'), reports: () => suiTab('reports'), log: () => suiTab('log'),
+    rcv: () => canSee('stock') && canEdit() ? `<button class="sui-rcv" onclick="openReceive((typeof rcv !== 'undefined' && rcv && rcv.mode) || 'po')" aria-label="Receive a PO or returning inventory" title="Receive a PO · returning inventory" data-tip="Receive a PO · returns">📥</button>` : '',
+    custom: () => { const a = suiCustomAct(); if (!a || (a[4] && !a[4]())) return ''; return `<button class="sui-cmt sui-custom" onclick="${esc(a[3])}" aria-label="${esc(a[2])}" title="${esc(a[2])}" data-tip="${esc(a[2])}">${a[1]}</button>`; },
+    bell: () => `<button class="sui-cmt" id="suiBell" onclick="openNotifications()" aria-label="All comments" title="All comments">🔔<span class="sui-badge red" id="suiBellBadge" hidden></span></button>`,
+    cmt: () => `<button class="sui-cmt" id="suiCmt" onclick="openMyComments()" aria-label="My comments and mentions" title="My comments and mentions">💬<span class="sui-badge" id="suiBadge" hidden></span></button>`,
+  };
+  function suiSave(o) { try { localStorage.setItem(suiKey(), JSON.stringify(o)); } catch (e) {  } if (document.body.classList.contains('menus-hidden')) hideMenus(true); const b = $('suiArr'); if (b) b.outerHTML = suiArrangeHtml(); }
+  function suiMove(k, d) { const o = suiOrder(), i = o.order.indexOf(k), j = i + d; if (i < 0 || j < 0 || j >= o.order.length) return; [o.order[i], o.order[j]] = [o.order[j], o.order[i]]; suiSave(o); }
+  function suiToggle(k) { const o = suiOrder(); o.off = o.off.includes(k) ? o.off.filter(x => x !== k) : o.off.concat(k); suiSave(o); }
+  function suiReset() { try { localStorage.removeItem(suiKey()); } catch (e) {  } suiSave(suiOrder()); }
+  function suiArrangeHtml() {
+    const o = suiOrder(), info = Object.fromEntries(SUI_ALL.map(x => [x[0], x])), ca = suiCustomAct(); info.custom = ['custom', ca[1], '⭐ Your button · ' + ca[2]];
+    return `<div id="suiArr" class="sui-arr"><div class="fmt-label">↕ Arrange the buttons <small style="color:var(--muted);font-weight:500">↑ ↓ to move · the switch shows or hides one</small></div>
+      <div class="sui-arr-prev">${o.order.filter(k => !o.off.includes(k)).map(k => k.startsWith('sep') ? '<i></i>' : `<span>${info[k][1]}</span>`).join('')}</div>
+      ${o.order.map((k, i) => `<div class="sui-arr-r ${o.off.includes(k) ? 'off' : ''}"><span class="sa-ic">${info[k][1]}</span><b>${esc(info[k][2])}</b>
+        <button onclick="suiMove('${k}', -1)" ${i ? '' : 'disabled'} aria-label="Move ${esc(info[k][2])} left">↑</button><button onclick="suiMove('${k}', 1)" ${i < o.order.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(info[k][2])} right">↓</button>
+        <label class="sa-sw"><input type="checkbox" ${o.off.includes(k) ? '' : 'checked'} onchange="suiToggle('${k}')" aria-label="Show ${esc(info[k][2])}"><i></i></label></div>`).join('')}
+      <div class="fmt-label" style="margin-top:12px">⭐ Your button does <small style="color:var(--muted);font-weight:500">pick one</small></div>
+      <div class="sui-acts">${SUI_ACTS.filter(a => !a[4] || a[4]()).map(a => `<button class="${suiCustomAct()[0] === a[0] ? 'on' : ''}" aria-pressed="${suiCustomAct()[0] === a[0]}" onclick="setSuiCustom('${a[0]}')"><span>${a[1]}</span>${esc(a[2])}</button>`).join('')}</div>
+      <button class="btn ghost" style="width:100%;margin-top:8px" onclick="suiReset()">↺ Back to the usual order</button></div>`;
+  }
   function suiLookHtml() {
     const l = suiLook(), known = suiColors().some(c => c[1] === l.color);
     const demo = ['🔍', '🏷', '|', '📦', '✅', '▦', '🚚', '📊', '🕘', '|', '🔔', '💬']
@@ -2080,12 +2129,13 @@
     const refOf = p => esc(JSON.stringify(p.tag ? ['tag', p.kind, p.key] : [p.t, p.ref]));
     return `<div class="pm-emo" role="group" aria-label="Pick an emoji for ${esc(p.label)}">
         <button class="${em[freeKey(p)] || pp[freeKey(p)] || pinNatives()[freeKey(p)] ? '' : 'on'}" onclick="setPinEmo(${refOf(p)}, -1)" title="Its usual icon">${p.tag ? esc(String(p.label).charAt(0).toUpperCase()) : p.ic || '📌'}<small>Usual</small></button>
+        ${!p.tag && p.t === 'order' ? (o => `<button class="pm-photo pm-tot ${pinNatives()[freeKey(p)] === '$total' ? 'on' : ''}" onclick="setPinTotal(${refOf(p)})" title="The order’s total as the pin"><span class="pin-tot st-${o ? esc(o.status) : 'Draft'}">${o ? esc(pinMoney(orderTotal(o))) : '$'}</span><small>Total</small></button>`)(orderByNo(p.ref)) : ''}
         ${!p.tag && p.t === 'item' && pinItemPhoto(p) ? (() => { const ph = pinItemPhoto(p), prev = pp[freeKey(p)] || thumbLg[ph] || thumbCache[ph] || photoCache[ph];
           return `<button class="pm-photo ${pp[freeKey(p)] ? 'on' : ''}" onclick="setPinPhoto(${refOf(p)})" title="The item’s photo, small and sharp">${prev ? `<img src="${prev}" alt="" decoding="async">` : '🖼'}<small>Photo</small></button>`; })() : ''}
         ${g.map((x, gi) => `<button class="${em[freeKey(p)] && JSON.stringify(em[freeKey(p)]) === JSON.stringify(x) ? 'on' : ''}" onclick="setPinEmo(${refOf(p)}, ${gi})" aria-label="Emoji ${gi + 1}">${emojiHtml(x)}</button>`).join('')}
         ${g.length ? '' : `<span class="muted-note">No emojis of your own yet. Build one in <b>😀 My emoji</b> (My profile) and save it, then come back here.</span>`}
-        <form class="pm-nat" onsubmit="event.preventDefault(); setPinNative(${refOf(p)}, this.elements.e.value)"><span class="pm-nat-now">${pinNatives()[freeKey(p)] ? esc(pinNatives()[freeKey(p)]) : '🙂'}</span>
-          <input name="e" class="field" maxlength="24" autocomplete="off" enterkeyhint="done" placeholder="Type any emoji" aria-label="Any emoji from your keyboard" value="${esc(pinNatives()[freeKey(p)] || '')}"><button class="btn" type="submit">Use</button></form></div>`;
+        <form class="pm-nat" onsubmit="event.preventDefault(); setPinNative(${refOf(p)}, this.elements.e.value)"><button type="button" class="pm-nat-pick" onclick="openEmojiPicker(e => setPinNative(${refOf(p)}, e), { mine: false })" aria-label="Pick from all emojis">😀▾</button><span class="pm-nat-now">${pinNatives()[freeKey(p)] && pinNatives()[freeKey(p)] !== '$total' ? esc(pinNatives()[freeKey(p)]) : '🙂'}</span>
+          <input name="e" class="field" maxlength="24" autocomplete="off" enterkeyhint="done" placeholder="Type any emoji" aria-label="Any emoji from your keyboard" value="${esc(pinNatives()[freeKey(p)] === '$total' ? '' : pinNatives()[freeKey(p)] || '')}"><button class="btn" type="submit">Use</button></form></div>`;
   }
   function pinMgrHtml() {
     const kinds = [['Results', pins.filter(p => p.t !== 'tool' && p.t !== 'link' && p.t !== 'filter')], ['Saved searches', pins.filter(p => p.t === 'filter')], ['Links', pins.filter(p => p.t === 'link')],

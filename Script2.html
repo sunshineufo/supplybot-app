@@ -2289,7 +2289,7 @@
         <div class="blkchoices">${BLOCK_STYLES.map(([id, label, note]) => `<button class="blkchoice b-${id} ${myBlocks() === id ? 'on' : ''}" onclick="setBlocks('${id}')" aria-pressed="${myBlocks() === id}">
           <span class="smp"><i></i><s></s></span>${label}${myBlocks() === id ? ' ✓' : ''}<small>${note}</small></button>`).join('')}</div>
         <div class="muted-note" style="margin-bottom:10px">How cards and boxes look across the app. Each theme remembers its own pick, just for you on this device.</div>`,
-      suiLook: `<div class="section-title" style="text-align:left">🧭 Floating menu</div>${suiLookHtml()}`,
+      suiLook: `<div class="section-title" style="text-align:left">🧭 Floating menu</div>${suiLookHtml()}${suiArrangeHtml()}`,
       emoji: `<div class="section-title" style="text-align:left">😀 My emoji</div>${emojiBuilderHtml()}`,
       mynotes: (() => { const n = (noteList || notesCacheGet() || []), pn = n.filter(x => pinned({ t: 'note', ref: x.id }) >= 0);
         return `<div class="section-title" style="text-align:left">📝 My notes</div>
@@ -2306,6 +2306,7 @@
           `<button class="${comicStyle() === id ? 'on' : ''}" onclick="setComicStyle('${id}')" aria-pressed="${comicStyle() === id}">${ic}<small>${label}</small></button>`).join('')}</span></div>
         <div class="emo-row" style="margin:4px 0 10px"><span class="emo-l">Emoji pins</span><span class="emo-opts">${[[false, '✨ Animated'], [true, '⏸ Still']].map(([v, label]) =>
           `<button class="${pinEmoStill() === v ? 'on' : ''}" onclick="setPinEmoStill(${v})" aria-pressed="${pinEmoStill() === v}">${label}</button>`).join('')}</span></div>
+        <button class="gm-tog qf-prof ${pinOrderTotals() ? 'on' : ''}" role="switch" aria-checked="${pinOrderTotals()}" onclick="setPinOrderTotals(!pinOrderTotals())"><span>💲</span><span><b>Order pins show their total</b><small>Every order pin wears its order total (amber draft, green shipped) unless you gave it its own emoji</small></span><i aria-hidden="true"></i></button>
         <button class="gm-tog qf-prof ${pinCapsOn() ? 'on' : ''}" role="switch" aria-checked="${pinCapsOn()}" onclick="setPinCaps(!pinCapsOn())"><span>🏷</span><span><b>Pin captions</b><small>A small name and the key fact under every pin: stock, order status and ship date, phone, timer…</small></span><i aria-hidden="true"></i></button>
         <button class="gm-tog qf-prof ${qfabOn() ? 'on' : ''}" role="switch" aria-checked="${qfabOn()}" onclick="setQfab(!qfabOn()); this.classList.toggle('on', qfabOn()); this.setAttribute('aria-checked', qfabOn())"><span>＋</span><span><b>Quick-create button</b><small>New order, note or item (and any pins you keep in it) from any screen</small></span><i aria-hidden="true"></i></button>
         <button class="gm-tog qf-prof ${summaryOff() ? '' : 'on'}" role="switch" aria-checked="${!summaryOff()}" onclick="setSummaryOff(!summaryOff())"><span>🔢</span><span><b>Stock count bar</b><small>The slim All rows · In stock · Out bar above the item list</small></span><i aria-hidden="true"></i></button>
@@ -2683,6 +2684,35 @@
   };
   const noteTextForEdit = t => String(t || '').replace(/@\{([^}\s]+)\}/g, (m, e) => '@' + personName(e));
   async function noteForEdit(n) { if (/@\{/.test(n.text || '') && !people) { try { await loadPeople(); } catch (e) {  } } const c = JSON.parse(JSON.stringify(n)); c.text = noteTextForEdit(c.text); c.tags = noteTagsOf(c); return c; }
+  const noteCmts = {}, noteCmtsLoading = {};
+  const NCM_STYLES = [['chat', '💬', 'Chat'], ['neon', '🌈', 'Neon'], ['sticky', '🗒', 'Sticky notes'], ['line', '🧵', 'Timeline']];
+  const ncmStyle = () => { try { const v = localStorage.getItem(emoKey('ncmStyle')); return NCM_STYLES.some(x => x[0] === v) ? v : 'chat'; } catch (e) { return 'chat'; } };
+  function setNcmStyle(k, id) { try { localStorage.setItem(emoKey('ncmStyle'), k); } catch (e) {  } noteCmtsRedraw(id); }
+  function noteCmtsBoxHtml(id) {
+    const d = noteCmts[id];
+    if (!d && !noteCmtsLoading[id]) setTimeout(() => loadNoteCmts(id), 0);
+    const mine = c => String(c.user).toLowerCase() === String(me && me.email || '').toLowerCase();
+    const st = ncmStyle();
+    return `<div class="ncm" id="ncBox" data-note="${esc(id)}" data-st="${st}"><div class="section-title" style="text-align:left">💬 Comments${d && d.comments.length ? ' · ' + d.comments.length : ''} <small style="text-transform:none;letter-spacing:0;font-weight:500">you and anyone this note mentions</small></div>
+      <div class="ncm-looks" role="group" aria-label="How comments look">${NCM_STYLES.map(([k, ic, l]) => `<button class="${st === k ? 'on' : ''}" aria-pressed="${st === k}" onclick="setNcmStyle('${k}', ${esc(JSON.stringify(id))})">${ic} ${l}</button>`).join('')}</div>
+      ${!d ? '<div class="muted-note">Loading comments…</div>' : d.comments.length ? `<div class="ncm-list">${d.comments.map(c => `<div class="ncm-c${mine(c) ? ' mine' : ''}">${cavHtml(c.user)}<div class="ncm-b"><div class="ncm-h"><b>${esc(mine(c) ? 'You' : personName(c.user))}</b><small>${esc(when(c.timestamp))}</small>
+          ${mine(c) || (noteEdit && noteEdit.id === id) ? `<button class="ncm-x" onclick="delNoteCmt(${esc(JSON.stringify(c.id))}, ${esc(JSON.stringify(id))})" aria-label="Delete this comment">✕</button>` : ''}</div><div class="ncm-t">${commentText(c.text)}</div>${rxHtml(c, 'n:' + id, d.me)}</div></div>`).join('')}</div>`
+        : '<div class="muted-note">No comments yet. Start the conversation.</div>'}
+      <div class="ncm-add"><textarea class="field" id="ncText" rows="2" maxlength="2000" placeholder="Write a comment…" onkeydown="if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') postNoteCmt(${esc(JSON.stringify(id))})"></textarea>
+        <button class="btn primary" id="ncGo" onclick="postNoteCmt(${esc(JSON.stringify(id))})">Post</button></div></div>`;
+  }
+  function noteCmtsRedraw(id) { const b = $('ncBox'); if (b && b.dataset.note === id) { const draft = ($('ncText') || {}).value || ''; b.outerHTML = noteCmtsBoxHtml(id); if ($('ncText')) $('ncText').value = draft; } }
+  async function loadNoteCmts(id) {
+    if (noteCmtsLoading[id]) return; noteCmtsLoading[id] = true;
+    try { noteCmts[id] = await quietApi('getNoteComments', id); noteCmtsRedraw(id); } catch (e) { noteCmts[id] = { comments: [] }; noteCmtsRedraw(id); } finally { delete noteCmtsLoading[id]; }
+  }
+  async function postNoteCmt(id) {
+    const t = $('ncText'), text = (t && t.value || '').trim(); if (!text) return toast('Write a comment first', true);
+    $('ncGo').disabled = true;
+    try { noteCmts[id] = await api('addNoteComment', id, text); t.value = ''; noteCmtsRedraw(id); const l = document.querySelector('#ncBox .ncm-list'); if (l) l.lastElementChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    catch (e) { fail(e); } finally { if ($('ncGo')) $('ncGo').disabled = false; }
+  }
+  async function delNoteCmt(cid, id) { if (!confirm('Delete this comment?')) return; try { noteCmts[id] = await api('deleteNoteComment', cid); noteCmtsRedraw(id); } catch (e) { fail(e); } }
   async function openSharedNote(id) {
     if (typeof pendDrop === 'function') pendDrop(id);
     openSheet('<div id="sharedNote"><div class="loading">Opening the note…</div></div>'); $('sheet').dataset.panel = 'sharednote';
@@ -2697,6 +2727,7 @@
           : `<div class="tl-rv"><span>${TALLY_KINDS[u[0]][0]} ${esc(r.label || '—')}</span><b>${r.n == null ? '—' : u[0] === 'val' ? esc(money(r.n)) : fmtNum(r.n) + ' ' + u[1]}</b></div>`; }).join('')}<div class="tl-tots">${tallyTotalsHtml(tallyOf(n), false)}</div></div>` : ''}
         ${mediaOf(n).length ? `<div class="section-title" style="text-align:left">📷 Photos &amp; videos · ${mediaOf(n).length}</div>${noteGalleryHtml(id, mediaOf(n), false)}` : ''}
         ${n.files.length ? `<div class="section-title" style="text-align:left">📄 PDFs</div>${n.files.map(f => `<div class="mn-row"><a href="#" onclick="event.preventDefault(); sharedNoteFile('${esc(id)}', '${esc(f.id)}')">📄 <span>${esc(f.name)}</span><small>⬇</small></a></div>`).join('')}` : ''}
+        ${noteCmtsBoxHtml(id)}
         <div class="mn-foot">${notePdfHtml(id, mediaOf(n).length > 0)}<button class="btn primary" onclick="closeSheet()">Close</button></div></div>`;
     } catch (e) { $('sharedNote').innerHTML = `<div class="empty" style="padding:16px">${esc(e && e.message || 'Couldn’t open that note.')}</div>`; }
   }
@@ -2929,6 +2960,7 @@
       <button class="btn ghost" id="noteFileBtn" ${n.id ? '' : 'disabled'} onclick="$('noteFile').value = ''; $('noteFile').click()">📄 Attach PDF</button>
       ${n.id ? '' : '<div class="muted-note" id="noteFileHint">Type a title or some text first; then you can add photos, videos and PDFs.</div>'}
       ${n.id ? notePdfHtml(n.id, mediaOf(n).length > 0) : ''}
+      ${n.id ? noteCmtsBoxHtml(n.id) : ''}
       <div class="mn-foot">${n.id ? `<button class="btn ghost danger" onclick="deleteMyNoteAsk()">🗑 Delete note</button>` : ''}<button class="btn primary" onclick="backToNotes()">${noteReturn ? '‹ Done' : 'Done'}</button></div>
     </div>`;
   }
@@ -4811,7 +4843,7 @@
     react(target, cid, e);
   }
   function rxHtml(c, target, me) {
-    const list = c.reactions || [], edit = canEdit();
+    const list = c.reactions || [], edit = !!me;
     const arg = `'${esc(target)}', '${esc(c.id)}'`;
     const chips = list.map(x => {
       const mine = x.users.indexOf(me) !== -1, names = x.users.map(personName).join(', ');
@@ -4819,6 +4851,8 @@
         ? `<button class="rx ${mine ? 'on' : ''}" onclick="react(${arg}, '${esc(x.emoji)}')" title="${esc(rxTip(x.emoji) + names)}" aria-pressed="${mine}" aria-label="${esc(rxName(x.emoji))} ${x.users.length}: ${esc(names)}">${rxFace(x.emoji)}<b>${x.users.length}</b></button>`
         : `<span class="rx" title="${esc(rxTip(x.emoji) + names)}">${rxFace(x.emoji)}<b>${x.users.length}</b></span>`;
     }).join('');
+    const liked = list.some(x => x.emoji === '👍' && x.users.indexOf(me) !== -1);
+    const like = edit && !list.some(x => x.emoji === '👍') ? `<button class="rx like" onclick="react(${arg}, '👍')" aria-pressed="false" aria-label="Like">👍<small>Like</small></button>` : '';
     const add = edit ? `<button class="rx add" onclick="rxPick(${arg})" aria-label="Add a reaction">☺<small>＋</small></button>` : '';
     const who = list.length ? `<button class="rx who ${rxWhoOpen.has(c.id) ? 'on' : ''}" onclick="rxWho(${arg})" aria-label="Who reacted">👥</button>` : '';
     const pickBtn = e => {
@@ -4837,9 +4871,85 @@
       </div>` : '';
     const whoList = rxWhoOpen.has(c.id) && list.length ? `<div class="rx-who">${list.map(x =>
       `<div><span>${rxFace(x.emoji)}</span><span>${rxTip(x.emoji) ? `<b class="rx-nm">${esc(rxName(x.emoji))}</b> · ` : ''}${esc(x.users.map(u => u === me ? 'You' : personName(u)).join(', '))}</span></div>`).join('')}</div>` : '';
-    return (chips || add) ? `<div class="rxs">${chips}${add}${who}</div>${picker}${whoList}` : '';
+    return (chips || add) ? `<div class="rxs">${like}${chips}${add}${who}</div>${whoList}` : '';
   }
+  const EP_CATS = [
+    ['quick', '⭐', 'Quick', ''],
+    ['recent', '🕘', 'Recent', ''],
+    ['mine', '😀', 'My emojis', ''],
+    ['smileys', '😊', 'Smileys', '😀 grinning happy smile|😃 smile big happy|😄 laugh smile eyes|😁 beaming grin|😆 laughing squint|😅 sweat smile phew|🤣 rofl rolling laughing|😂 joy tears laugh lol|🙂 slight smile|🙃 upside down silly|😉 wink|😊 blush happy|😇 halo innocent angel|🥰 love hearts adore|😍 heart eyes love|🤩 star struck wow|😘 kiss blow|😋 yum tasty|😛 tongue|😜 wink tongue crazy|🤪 zany wild|🤑 money mouth rich|🤗 hug|🤭 oops giggle|🤫 shush quiet secret|🤔 thinking hmm|🤐 zipper sealed|🤨 raised eyebrow skeptical|😐 neutral meh|😑 expressionless|😶 no mouth speechless|😏 smirk|😒 unamused|🙄 eye roll|😬 grimace awkward yikes|😌 relieved calm|😔 pensive sad|😪 sleepy|🤤 drool|😴 sleeping zzz tired|😷 mask sick|🤒 sick fever|🤕 hurt bandage|🤢 nauseous|🤮 vomit|🥵 hot heat sweating|🥶 cold freezing|🥴 woozy dizzy|😵 dizzy|🤯 mind blown exploding|🤠 cowboy|🥳 party celebrate|😎 cool sunglasses|🤓 nerd geek|🧐 monocle inspect|😕 confused|😟 worried|🙁 frown|😮 wow surprised open mouth|😯 hushed|😲 astonished shocked|😳 flushed embarrassed|🥺 pleading puppy eyes|😦 frowning|😧 anguished|😨 fearful|😰 anxious sweat|😥 sad relieved|😢 cry tear sad|😭 sob crying|😱 scream shocked|😖 confounded|😣 persevere|😞 disappointed|😓 downcast sweat|😩 weary|😫 tired|🥱 yawn bored|😤 triumph huff steam|😡 angry mad pout|😠 angry|🤬 cursing swearing|😈 devil smile|💀 skull dead lol|💩 poop|🤡 clown|👻 ghost|👽 alien|🤖 robot bot|😺 cat smile|😹 cat joy|😻 cat heart eyes'],
+    ['gestures', '👍', 'Hands & people', '*👍 thumbs up like yes good ok|*👎 thumbs down dislike no|*👏 clap applause bravo|*🙌 raised hands hooray celebrate|*👐 open hands|*🤲 palms up|*🤝 handshake deal agree|*🙏 pray please thanks thank you|*✌️ peace victory|*🤞 fingers crossed luck|*🤟 love you hand|*🤘 rock on horns|*👌 ok perfect|*🤌 pinched fingers|*🤏 pinch small|*👈 point left|*👉 point right|*👆 point up|*👇 point down|*☝️ index up|*✋ raised hand stop high five|*🤚 back of hand|*🖐️ hand fingers splayed|*🖖 vulcan|*👋 wave hello hi bye|*🤙 call me shaka|*💪 muscle strong flex|*✍️ writing|*🫶 heart hands love|*👊 fist bump punch|*✊ raised fist|🧠 brain smart|👀 eyes look watching|👁️ eye|👂 ear listen|👃 nose|👄 lips|*👶 baby|*🧒 child|*👦 boy|*👧 girl|*🧑 person|*👨 man|*👩 woman|*🧓 older person|*👷 construction worker builder|*🧑‍🔧 mechanic technician|*🧑‍🏭 factory worker|*🧑‍💼 office worker manager pm|*🧑‍💻 technologist computer|*🕵️ detective|*💁 tipping hand info|*🙋 raising hand|*🤷 shrug idk|*🤦 facepalm|*🙇 bow|*🏃 running hurry|*🚶 walking|*🧍 standing|👥 people team|🗣️ speaking'],
+    ['hearts', '❤️', 'Hearts & love', '❤️ red heart love|🧡 orange heart|💛 yellow heart|💚 green heart|💙 blue heart|💜 purple heart|🖤 black heart|🤍 white heart|🤎 brown heart|💔 broken heart|❣️ heart exclamation|💕 two hearts|💞 revolving hearts|💓 beating heart|💗 growing heart|💖 sparkling heart|💘 cupid arrow|💝 heart ribbon gift|💟 heart decoration|♥️ heart suit|💋 kiss mark|💯 hundred perfect 100|💢 anger|💥 boom collision|💫 dizzy star|💦 sweat drops|💨 dash fast|💬 speech bubble chat|💭 thought bubble|💤 zzz sleep'],
+    ['work', '⚡', 'Work & EV', '⚡ lightning electric power ev charge|🔌 plug electric charger outlet|🔋 battery charge|🪫 low battery|🚗 car vehicle|🚙 suv|🛻 pickup truck|🚚 delivery truck shipping|🚛 semi truck freight|🚐 van|🏗️ construction crane building|🚧 construction barrier road work|👷 worker hard hat|🦺 safety vest|⛑️ helmet rescue|🔧 wrench tool fix|🔨 hammer tool|🪛 screwdriver|🛠️ tools hammer wrench|⚙️ gear settings|🧰 toolbox|🪚 saw|🪜 ladder|🔩 nut bolt|🧱 brick wall|⛏️ pick|🪓 axe|📦 package box parcel shipment|📫 mailbox|🏷️ label tag price|📋 clipboard checklist|📝 memo note write|📎 paperclip attach|📌 pin pushpin|📍 location pin map|📐 triangle ruler|📏 ruler measure|✂️ scissors cut|🗂️ dividers files|📁 folder|📄 page document pdf|🧾 receipt invoice|💲 dollar price|💰 money bag|💵 cash dollars|💳 credit card|📊 bar chart report|📈 chart up growth|📉 chart down|🗓️ calendar date|📅 calendar|⏰ alarm clock|⏱️ stopwatch timer|⌛ hourglass|🏭 factory|🏢 office building|🏠 house home|🏘️ houses neighborhood|🅿️ parking|⛽ fuel gas pump|🚦 traffic light|🛑 stop sign|🗺️ map|🧭 compass|🔦 flashlight|💡 light bulb idea|🧯 fire extinguisher|🔒 lock locked|🔓 unlocked|🔑 key|🗝️ old key|🔐 locked key|📡 antenna signal|📶 signal bars|📱 phone mobile|💻 laptop computer|🖨️ printer|📷 camera photo|🔍 search magnifier|🧪 test tube|🧲 magnet|🌞 sun solar|🔆 bright'],
+    ['nature', '🌿', 'Nature', '🌞 sun|🌤️ sun cloud|⛅ partly cloudy|🌧️ rain|⛈️ storm thunder|🌩️ lightning cloud|❄️ snow cold|🌈 rainbow|🌊 wave water|🔥 fire hot lit|🌪️ tornado|🌍 earth globe world|🌱 seedling grow|🌿 herb leaf green|🍃 leaves|🍀 four leaf clover luck|🌳 tree|🌲 evergreen pine|🌵 cactus|🌻 sunflower|🌹 rose|🌸 blossom|🌼 flower|🍁 maple leaf fall|🐶 dog|🐱 cat|🐻 bear|🦊 fox|🐼 panda|🐨 koala|🦁 lion|🐯 tiger|🐮 cow|🐷 pig|🐸 frog|🐵 monkey|🐔 chicken|🐧 penguin|🦅 eagle|🐝 bee|🦋 butterfly|🐢 turtle|🐍 snake|🐬 dolphin|🐳 whale|🦄 unicorn|🐞 ladybug'],
+    ['food', '🍕', 'Food & drink', '☕ coffee|🍵 tea|🥤 soda cup|🧃 juice|🍺 beer|🍻 cheers beers|🥂 champagne toast|🍷 wine|🍕 pizza|🍔 burger|🌭 hot dog|🌮 taco|🌯 burrito|🥪 sandwich|🍟 fries|🍗 chicken leg|🥩 steak|🍳 cooking egg|🥞 pancakes|🧇 waffle|🥓 bacon|🥯 bagel|🍩 donut|🍪 cookie|🎂 birthday cake|🍰 cake|🧁 cupcake|🍫 chocolate|🍿 popcorn|🍎 apple|🍌 banana|🍉 watermelon|🍇 grapes|🍓 strawberry|🍑 peach|🍍 pineapple|🥑 avocado|🌶️ chili pepper hot|🥗 salad|🍜 noodles|🍣 sushi|🍦 ice cream'],
+    ['activity', '🎉', 'Celebrate & play', '🎉 party popper celebrate congrats|🎊 confetti|🥳 party face|🎈 balloon|🎁 gift present|🎀 ribbon|🎂 birthday cake|🏆 trophy win winner|🥇 gold medal first|🥈 silver medal|🥉 bronze medal|🏅 medal|🎖️ military medal|🎯 bullseye target goal|🚀 rocket launch ship it|⭐ star|🌟 glowing star|✨ sparkles new|💎 gem diamond|👑 crown king|⚽ soccer|🏀 basketball|🏈 football|⚾ baseball|🎾 tennis|🏐 volleyball|🎳 bowling|⛳ golf|🎮 video game|🎲 dice|♟️ chess|🎸 guitar|🎵 music note|🎶 music|🎤 microphone|🎬 movie clapper|🎨 art palette|🧩 puzzle'],
+    ['travel', '✈️', 'Travel & places', '✈️ airplane flight|🛫 departure|🛬 arrival|🚁 helicopter|🚂 train|🚆 train|🚇 metro|🚌 bus|🚕 taxi|🏎️ race car fast|🏍️ motorcycle|🚲 bike|🛴 scooter|⛵ sailboat|🚢 ship|⚓ anchor|🗽 statue liberty|🏛️ classical building|🏰 castle|🏟️ stadium|🏖️ beach|🏝️ island|⛰️ mountain|🏔️ snow mountain|🌋 volcano|🏕️ camping|🌆 city dusk|🌃 night city|🌉 bridge night|🏁 checkered flag finish|🚩 red flag|🛣️ highway road|🛤️ railway'],
+    ['symbols', '✅', 'Symbols', '✅ check yes done|☑️ check box|✔️ check mark|❌ cross no wrong|❎ cross box|➕ plus add|➖ minus|➗ divide|✖️ multiply|❓ question|❔ white question|❗ exclamation important|‼️ double exclamation|⁉️ interrobang|⚠️ warning caution|⛔ no entry|🚫 prohibited forbidden|🔴 red circle|🟠 orange circle|🟡 yellow circle|🟢 green circle|🔵 blue circle|🟣 purple circle|⚫ black circle|⚪ white circle|🟥 red square|🟩 green square|🟨 yellow square|🟦 blue square|🔺 red triangle up|🔻 red triangle down|⬆️ up arrow|⬇️ down arrow|⬅️ left arrow|➡️ right arrow|↩️ return back|🔄 refresh repeat|🔁 repeat|🆕 new|🆗 ok|🆙 up|🔝 top|🔜 soon|♻️ recycle|💲 dollar|#️⃣ hash number|🔢 numbers|ℹ️ info|🔔 bell notification|🔕 mute|📣 megaphone announce|📢 loudspeaker|🕐 clock time|♾️ infinity|☮️ peace|🆘 sos help'],
+    ['flags', '🏁', 'Flags', '🏁 checkered race finish|🚩 red flag|🎌 crossed flags|🏴 black flag|🏳️ white flag|🏳️‍🌈 rainbow flag pride|🇺🇸 usa united states america|🇨🇦 canada|🇲🇽 mexico|🇬🇧 uk britain|🇮🇪 ireland|🇩🇪 germany|🇫🇷 france|🇪🇸 spain|🇮🇹 italy|🇵🇹 portugal|🇳🇱 netherlands|🇧🇷 brazil|🇦🇷 argentina|🇨🇴 colombia|🇵🇷 puerto rico|🇯🇵 japan|🇰🇷 korea|🇨🇳 china|🇮🇳 india|🇵🇭 philippines|🇦🇺 australia|🇳🇿 new zealand|🇿🇦 south africa|🇳🇬 nigeria|🇯🇲 jamaica|🇺🇦 ukraine'],
+  ];
+  const EP_TONES = [['', '✋', 'Default'], ['🏻', '✋🏻', 'Light'], ['🏼', '✋🏼', 'Medium-light'], ['🏽', '✋🏽', 'Medium'], ['🏾', '✋🏾', 'Medium-dark'], ['🏿', '✋🏿', 'Dark']];
+  const EP_QUICK = ['👍', '❤️', '😂', '🔥', '🎉', '👏', '🙏', '✅', '😮', '💯', '⚡', '🚀'];
+  let epkData = null;
+  function epAll() {
+    if (epkData) return epkData;
+    epkData = EP_CATS.filter(c => c[3]).map(([k, ic, label, src]) => ({ k, ic, label, list: src.split('|').map(x => { const tone = x[0] === '*', s = tone ? x.slice(1) : x, sp = s.indexOf(' ');
+      return { e: s.slice(0, sp), words: s.slice(sp + 1), tone }; }) }));
+    return epkData;
+  }
+  const epTone = () => { try { return localStorage.getItem('epTone') || ''; } catch (e) { return ''; } };
+  const epToned = x => x.tone && epTone() ? x.e.replace(/️/g, '').replace(/^(\p{Extended_Pictographic})/u, '$1' + epTone()) : x.e;
+  const epName = e => { for (const c of epAll()) { const f = c.list.find(x => x.e === e || epToned(x) === e); if (f) return f.words.split(' ').slice(0, 3).join(' '); } return rxIsMine(e) ? rxName(e) : ''; };
+  let epk = null;
+  function openEmojiPicker(onPick, opts) {
+    closeEmojiPicker();
+    epk = { onPick, q: '', opts: opts || {} };
+    const w = document.createElement('div'); w.id = 'emoPick'; w.className = 'ep-wrap'; w.setAttribute('role', 'dialog'); w.setAttribute('aria-label', 'Pick an emoji');
+    w.innerHTML = `<div class="ep-back" onclick="closeEmojiPicker()"></div><div class="ep">${epHtml()}</div>`;
+    document.body.appendChild(w);
+    requestAnimationFrame(() => { w.classList.add('in'); const q = $('epQ'); if (q && matchMedia('(pointer: fine)').matches) q.focus(); });
+    document.addEventListener('keydown', epKey, true);
+  }
+  function closeEmojiPicker() { const w = $('emoPick'); if (w) w.remove(); epk = null; document.removeEventListener('keydown', epKey, true); }
+  function epKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closeEmojiPicker(); } }
+  function epPick(e) {
+    if (!epk) return; const f = epk.onPick;
+    if (!rxIsMine(e)) { rxRecent = [e].concat(rxRecent.filter(x => x !== e)).slice(0, 24); try { localStorage.setItem('rxRecent', JSON.stringify(rxRecent)); } catch (err) {  } }
+    closeEmojiPicker(); f(e);
+  }
+  function epBtn(e, label) { return `<button class="ep-e" onclick="epPick(${esc(JSON.stringify(e))})" onmouseenter="epPeek(${esc(JSON.stringify(e))})" onfocus="epPeek(${esc(JSON.stringify(e))})" aria-label="${esc(label || epName(e) || 'emoji')}">${rxFace(e)}</button>`; }
+  function epPeek(e) { const p = $('epPeek'); if (p) p.innerHTML = `<span class="ep-big">${rxFace(e)}</span><b>${esc(epName(e) || '')}</b>`; }
+  function epHtml() {
+    const q = norm(epk.q), mine = epk.opts.mine === false ? [] : emoGallery().filter(x => !x.pic).map(cemoToken);
+    let body;
+    if (q) {
+      const words = q.split(/\s+/), hits = [];
+      epAll().forEach(c => c.list.forEach(x => { const ks = (x.words + ' ' + c.label.toLowerCase()).split(/\s+/); if (words.every(w => ks.some(k => k.startsWith(w)))) hits.push(epToned(x)); }));
+      mine.forEach(t => { const nm = norm(rxName(t)); if (words.every(w => nm.includes(w))) hits.unshift(t); });
+      body = hits.length ? `<div class="ep-grid">${hits.slice(0, 160).map(e => epBtn(e)).join('')}</div>` : `<div class="ep-none">No emoji called “${esc(epk.q)}”. Try another word, or type one from your keyboard below.</div>`;
+    } else {
+      const sec = (k, ic, label, list) => list.length ? `<section class="ep-sec" id="ep-${k}"><h4>${ic} ${esc(label)}</h4><div class="ep-grid">${list.map(e => epBtn(e)).join('')}</div></section>` : '';
+      body = sec('recent', '🕘', 'Recent', rxRecent.slice(0, 16)) + sec('mine', '😀', 'My emojis', mine) + epAll().map(c => sec(c.k, c.ic, c.label, c.list.map(epToned))).join('');
+    }
+    const tabs = EP_CATS.filter(([k]) => k !== 'quick' && (k !== 'recent' || rxRecent.length) && (k !== 'mine' || mine.length));
+    return `<div class="ep-top"><div class="ep-quick">${EP_QUICK.map(e => `<button onclick="epPick('${e}')" aria-label="${esc(epName(e))}">${e}</button>`).join('')}</div>
+        <div class="ep-search"><span>🔎</span><input id="epQ" type="search" autocomplete="off" placeholder="Search emoji: fire, truck, thanks…" value="${esc(epk.q)}" oninput="epk.q = this.value; epRedraw(true)">
+          <div class="ep-tones" role="radiogroup" aria-label="Skin tone">${EP_TONES.map(([t, face, l]) => `<button class="${epTone() === t ? 'on' : ''}" role="radio" aria-checked="${epTone() === t}" onclick="epSetTone('${t}')" title="${l}">${face}</button>`).join('')}</div></div>
+        ${q ? '' : `<div class="ep-tabs">${tabs.map(([k, ic, l]) => `<button onclick="epJump('${k}')" title="${esc(l)}" aria-label="${esc(l)}">${ic}</button>`).join('')}</div>`}</div>
+      <div class="ep-body" id="epBody">${body}</div>
+      <div class="ep-foot"><div class="ep-peek" id="epPeek"><span class="ep-big">😀</span><b>Hover or press an emoji</b></div>
+        <input class="ep-any" placeholder="or type any ➕" aria-label="Any emoji from your keyboard" oninput="const e = firstEmoji(this.value); if (e) epPick(e)"><button class="ep-x" onclick="closeEmojiPicker()" aria-label="Close">✕</button></div>`;
+  }
+  function epRedraw(keepFocus) {
+    const box = document.querySelector('#emoPick .ep'); if (!box) return;
+    const pos = keepFocus && $('epQ') ? $('epQ').selectionStart : null;
+    box.innerHTML = epHtml();
+    if (keepFocus && $('epQ')) { $('epQ').focus(); if (pos != null) $('epQ').setSelectionRange(pos, pos); }
+  }
+  function epSetTone(t) { try { localStorage.setItem('epTone', t); } catch (e) {  } const top = ($('epBody') || {}).scrollTop || 0; epRedraw(); if ($('epBody')) $('epBody').scrollTop = top; }
+  function epJump(k) { const s = $('ep-' + k), b = $('epBody'); if (s && b) b.scrollTo({ top: s.offsetTop - b.offsetTop - 4, behavior: 'smooth' }); }
   function rxPlace(target) {
+    if (target.startsWith('n:')) { const id = target.slice(2); return { data: noteCmts[id], redraw: () => noteCmtsRedraw(id) }; }
     if (target.startsWith('o:')) {
       const no = target.slice(2);
       return { data: orderCommentsCache[no], redraw: () => showOrderComments(no) };
@@ -4847,10 +4957,9 @@
     const it = byId(target.slice(2));
     return { data: it && commentsCache[it.key], redraw: () => it && showComments(it) };
   }
-  function rxPick(target, cid) { rxPickerFor = rxPickerFor === cid ? null : cid; rxPlace(target).redraw(); }
+  function rxPick(target, cid) { openEmojiPicker(e => react(target, cid, e)); }
   function rxWho(target, cid) { rxWhoOpen.has(cid) ? rxWhoOpen.delete(cid) : rxWhoOpen.add(cid); rxPlace(target).redraw(); }
   async function react(target, cid, emoji) {
-    if (viewOnly()) return;
     const place = rxPlace(target), c = place.data && place.data.comments.find(x => x.id === cid);
     if (!c) return;
     const before = JSON.parse(JSON.stringify(c.reactions || [])), me = place.data.me;
@@ -6156,254 +6265,3 @@
         <span class="n">${o.lines.reduce((n, l) => n + l.qty, 0)}</span></button>`).join('') : '<div class="muted-note">No draft orders yet.</div>'}
       <div class="actions"><button class="btn ghost" onclick="openScanCard('${it.id}', '')">‹ Back</button></div>`);
   }
-  function scanAddTo(no, key) {
-    const it = items.find(i => i.key === key);
-    no ? editOrder(no) : newOrder();
-    if (!od) return;
-    const line = od.lines.find(l => l.key === key);
-    if (line) line.qty++; else od.lines.push({ key, qty: 1, name: it.name, partNumber: it.partNumber, job: it.job });
-    renderOrderEditor(true);
-    toast(`${it.name} added${no ? ' to ' + no : ''} · Save draft to keep it`);
-  }
-  function serialHits(code) {
-    const c = codeNorm(code);
-    if (!c || c.length < 3) return { count: 0, items: [], orders: [] };
-    const has = list => (list || []).some(x => codeNorm(x) === c);
-    const its = items.filter(i => has(i.serials) || has(i.endpoints));
-    const ords = canSee('orders') ? orders.filter(o => o.lines.some(l => has(l.serials) || has(l.endpoints))) : [];
-    return { count: its.length + ords.length, items: its, orders: ords };
-  }
-  function openSerialCard(code) {
-    const h = serialHits(code);
-    openSheet(`<div class="sc-code">▦ Scanned ${esc(code)}</div><h2 style="margin-top:4px">Serial # / endpoint found</h2>
-      ${h.items.length ? `<div class="section-title">Item</div>` + h.items.map(i => pickRow(i, `navList = []; openDetail('${i.id}')`)).join('') : ''}
-      ${h.orders.length ? `<div class="section-title">On orders</div>` + h.orders.map(o => `<button class="pick" onclick="openOrder('${esc(o.orderNo)}')">
-        <span><div class="t">${esc(o.orderNo)} · ${esc(o.status)}</div><div class="s">${esc([o.projectName, fmtDay(o.orderDate)].filter(Boolean).join(' · '))}</div></span><span class="n">›</span></button>`).join('') : ''}
-      <div class="scn-actions" style="margin-top:12px"><button class="btn ghost" onclick="scanNext()">▦ Scan next</button></div>
-      ${recentScansHtml(code)}
-      <div class="actions"><button class="btn ghost" onclick="closeSheet()">Close</button></div>`);
-  }
-  function openLinkCard(code) {
-    openSheet(`<div class="sc-code">▦ Scanned a link</div><h2 style="margin-top:4px;word-break:break-all;font-size:16px">${esc(code)}</h2>
-      <div class="scn-actions"><a class="btn primary" href="${esc(code)}" target="_blank" rel="noopener">🔗 Open link</a>
-        ${canEdit() ? `<button class="btn ghost" onclick='openAttach(${esc(JSON.stringify(code))})'>Attach it to an item</button>` : ''}
-        <button class="btn ghost" onclick="scanNext()">▦ Scan next</button></div>
-      ${recentScansHtml(code)}
-      <div class="actions"><button class="btn ghost" onclick="closeSheet()">Close</button></div>`);
-  }
-  function openAttach(code) {
-    if (!canEdit()) {
-      return openSheet(`<h2>Code ${esc(code)}</h2>
-        <p style="color:var(--muted)">No item has this code in the <b>Barcode / QR Code</b> column yet. Ask an editor to attach it to the right item.</p>
-        <div class="actions"><button class="btn ghost" onclick="closeSheet()">Close</button></div>`);
-    }
-    openSheet(`<h2>New code: ${esc(code)}</h2>
-      <p style="color:var(--muted);font-size:14px;margin-top:0">It isn't in the <b>Barcode / QR Code</b> column yet. Pick the item it belongs to. The code is saved to that row, and next time it opens the item directly.</p>
-      <input id="linkSearch" class="field" type="search" placeholder="Search name, part #, manufacturer…" oninput="renderLinkList()">
-      <div class="pick-tools" style="justify-content:flex-end">${pickSortHtml('renderLinkList')}</div>
-      <div id="linkList"></div>
-      <div class="actions" style="flex-direction:column">
-        <button class="btn ghost" onclick='openForm(null, { barcode: ${esc(JSON.stringify(code))} })'>It's not in the list: add a new item</button>
-        <button class="btn ghost" onclick="closeSheet()">Cancel</button>
-      </div>`);
-    $('sheet').dataset.linkCode = code;
-    renderLinkList();
-  }
-  function renderLinkList() {
-    const code = $('sheet').dataset.linkCode;
-    const q = norm($('linkSearch').value);
-    const suggested = q ? [] : items.filter(i => realPart(i.partNumber) && realPart(i.partNumber) === codeNorm(code));
-    const rest = items.filter(i => !suggested.includes(i) &&
-        itemHit(i, q))
-      .sort(pickSorter()).slice(0, 40);
-    const row = i => `<button class="pick" onclick="attachCode('${i.id}')">
-      <span><div class="t">${esc(i.name)}</div><div class="s">${esc([i.partNumber, isAvailableJob(i) ? 'Available' : i.job, codesOf(i).length ? 'has code ' + codesOf(i).join(', ') : ''].filter(Boolean).join(' · '))}</div></span>
-      <span class="n">${i.quantity}</span></button>`;
-    $('linkList').innerHTML =
-      (suggested.length ? `<div class="section-title" style="margin-top:4px">Part # matches this code</div>${suggested.map(row).join('')}<div class="section-title">All items</div>` : '') +
-      (rest.map(row).join('') || '<div class="empty">No matches. Try another search.</div>');
-  }
-  async function attachCode(id) {
-    if (viewOnly()) return;
-    const code = $('sheet').dataset.linkCode;
-    const it = byId(id);
-    if (codesOf(it).length && !confirm(`"${it.name}" already has code ${codesOf(it).join(', ')}.\n\nAdd ${code} as another code for it?`)) return;
-    try {
-      toast('Saving to spreadsheet…');
-      const saved = replaceItem(id, await api('attachBarcode', id, it.key, code));
-      render(); navList = []; openDetail(saved.id); toast('Code saved to Barcode / QR Code column');
-    } catch (e) { fail(e); }
-  }
-  function botIntro() {
-    const name = document.querySelector('header .bot-name'), svg = name && name.querySelector('.bot');
-    const done = () => { if (name) name.classList.remove('bi-pre', 'bi-play'); document.querySelectorAll('.bi-fx, .bi-flash').forEach(e => e.remove()); };
-    try {
-      if (!svg || !svg.getBoundingClientRect().width || currentSkin() === 'simple'
-        || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) return done();
-      const NS = 'http:' + '\x2F\x2Fwww.w3.org/2000/svg', bx = 152, by = 369;
-      const fx = document.createElementNS(NS, 'g'); fx.setAttribute('class', 'bi-fx');
-      const el = (tag, attrs, style) => { const e = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); if (style) e.setAttribute('style', style); fx.appendChild(e); return e; };
-      const zig = (x0, y0, a, len, steps) => { let x = x0, y = y0, d = `M${x0} ${y0}`; const pts = [];
-        for (let i = 1; i <= steps; i++) { const t = len / steps, w = (Math.random() - .5) * t * 1.3;
-          x += Math.cos(a) * t - Math.sin(a) * w; y += Math.sin(a) * t + Math.cos(a) * w; d += ` L${x.toFixed(1)} ${y.toFixed(1)}`; pts.push([x, y]); }
-        return { d, pts }; };
-      const arc = (d, t, dur, len, thin) => el('path', { d, class: 'bi-arc' + (thin ? ' thin' : ''), 'stroke-dasharray': len }, `--t:${t}s;--d:${dur}s;--len:${len}`);
-      for (let i = 0; i < 9; i++) {
-        const a = (i / 9) * Math.PI * 2 + Math.random() * .6, len = 260 + Math.random() * 380, t = (i % 2 ? .38 : .12) + Math.random() * .25;
-        const z = zig(bx, by, a, len, 7 + Math.floor(Math.random() * 4));
-        arc(z.d, t, .3 + Math.random() * .2, Math.round(len * 1.6));
-        if (Math.random() < .6) { const p = z.pts[2 + Math.floor(Math.random() * 3)];
-          arc(zig(p[0], p[1], a + (Math.random() < .5 ? -1 : 1) * (.5 + Math.random() * .6), len * .4, 4).d, t + .05, .25, Math.round(len * .7), true); }
-      }
-      [[97, 0], [202, 0]].forEach(([ax, ay], i) => {
-        arc(zig(bx, by - 40, Math.atan2(ay - by + 40, ax - bx), Math.hypot(ax - bx, ay - by + 40), 8).d, 1.25 + i * .08, .35, 700, true);
-        el('circle', { cx: ax, cy: ay - 4, r: 16, class: 'bi-spark' }, `--t:${1.5 + i * .08}s`);
-      });
-      [.1, .35, .62].forEach((t, i) => el('circle', { cx: bx, cy: by, r: 240 + i * 90, class: 'bi-ring' }, `--t:${t}s`));
-      svg.appendChild(fx);
-      const hdr = name.closest('header');
-      if (hdr) { const f = document.createElement('div'); f.className = 'bi-flash';
-        const hr = hdr.getBoundingClientRect(), sr = svg.getBoundingClientRect();
-        f.style.setProperty('--bx', Math.round((sr.left + sr.width / 2 - hr.left) / Math.max(1, hr.width) * 100) + '%'); hdr.appendChild(f); }
-      name.classList.remove('bi-pre'); void name.offsetWidth; name.classList.add('bi-play');
-      setTimeout(done, 2600);
-    } catch (e) { done(); }
-  }
-  (() => { const n = document.querySelector('header .bot-name'); if (n && currentSkin() !== 'simple' && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) n.classList.add('bi-pre'); })();
-  setTimeout(botIntro, 450);
-  const WHY_OK = window.matchMedia && matchMedia('(hover: hover) and (pointer: fine)').matches;
-  function whyHit(label, v, q) {
-    const s = String(v ?? '').trim();
-    if (!s || !hayHit(norm(s), q)) return null;
-    const at = s.toLowerCase().indexOf(q);
-    if (at < 0) return { label, html: esc(s.length > 70 ? s.slice(0, 67) + '…' : s) };
-    const from = Math.max(0, at - 28), to = Math.min(s.length, at + q.length + 28);
-    return { label, html: (from ? '…' : '') + esc(s.slice(from, at)) + '<mark>' + esc(s.slice(at, at + q.length)) + '</mark>' + esc(s.slice(at + q.length, to)) + (to < s.length ? '…' : '') };
-  }
-  function whyReasons(kind, x, q) {
-    const f = [];
-    const add = (label, vals) => (Array.isArray(vals) ? vals : [vals]).forEach(v => f.push([label, v]));
-    if (kind === 'item') {
-      add('🏷 Name', x.name); add('🏷 Tag', x.tags || []); add('#️⃣ Part #', x.partNumber); add('▦ Barcode', x.barcode); add('🏭 Manufacturer', x.manufacturer);
-      add('🗂 Category', x.category); add('📍 Location', x.location); add('🗄 Shelf', x.shelf); add('👷 Assigned job', x.job);
-      add('⚡ Voltage', x.voltage); add('⚡ Phase', x.phase); add('⚡ Amperage', x.amperage); add('⚡ Rating', x.rating); add('🔌 Connector', x.connector);
-      add('📦 Dimensions', x.dimensions); add('⚖ Weight', x.weight); add('📄 PDF', (x.documents || []).map(d => d.name));
-      add('🔌 Endpoint', x.endpoints || []); add('🔢 Serial #', x.serials || []); add('📋 Sheet column', String(x.sx || '').split(' · '));
-    } else {
-      add('🚚 Order #', x.orderNo); add('🏷 Tag', x.tags || []); add('🏗 Project', x.projectName); add('#️⃣ Project #', x.projectNo); add('🧭 Activity', x.activityType);
-      add('📍 From', x.fromLocation); add('📍 To', x.toLocation); add('👤 Contact', x.contact); add('🚛 Freight', x.freight); add('🏢 Company / vendor', x.vendor);
-      add('🧑‍💼 PM', x.pm); add('📍 Ship to', x.shipTo); add('📝 Notes', x.notes);
-      (x.lines || []).forEach(l => { add('📦 Item on it', l.name); add('#️⃣ Item part #', l.partNumber); add('🔢 Serial #', l.serials || []); add('🔌 Endpoint', l.endpoints || []); });
-      orderLinksOf(x).forEach(k => add('🔗 Link', k.label || k.url)); add('📄 PDF', (x.docs || []).map(d => d.name));
-    }
-    const seen = new Set(), out = [];
-    f.forEach(([label, v]) => { if (out.length >= 4) return; const h = whyHit(label, v, q); if (h && !seen.has(label + h.html)) { seen.add(label + h.html); out.push(h); } });
-    return out;
-  }
-  let whyT = 0, whyFor = null;
-  function whyHide() { clearTimeout(whyT); whyFor = null; const w = $('whyBot'); if (w) w.classList.remove('show'); }
-  function whyShow(el, mx, my, above) {
-    const q = norm($('search') ? $('search').value : '');
-    if (!q) return;
-    const [kind, ref] = el.dataset.why.split(/:(.*)/s);
-    const x = kind === 'item' ? byId(ref) : orderByNo(ref);
-    if (!x) return;
-    const reasons = whyReasons(kind, x, q), dq = dateQuery(q);
-    const dateLine = kind === 'order' && !reasons.length && dq && dateHit(dq, ...orderDates(x)) ? `<li><b>📅 Date</b> one of its dates is in <mark>${esc($('search').value.trim())}</mark></li>` : '';
-    const intros = ['Beep boop! Here’s why I picked this one:', 'Good eye! I matched', 'Found it! Your search shows up in', 'Here’s what lit me up:'];
-    const intro = intros[Math.floor(Math.random() * intros.length)];
-    let w = $('whyBot');
-    if (!w) { w = document.createElement('div'); w.id = 'whyBot'; w.className = 'why-bot'; w.setAttribute('role', 'status'); document.body.appendChild(w); }
-    const src = document.querySelector('header .bot'), bot = src ? src.cloneNode(true) : null;
-    if (bot) { bot.querySelectorAll('.bi-fx').forEach(e => e.remove()); bot.setAttribute('class', 'wb-bot'); }
-    w.innerHTML = `<div class="wb-figure">${bot ? bot.outerHTML : '🤖'}</div><div class="wb-bubble"><div class="wb-intro">${esc(intro)}</div>
-      ${reasons.length || dateLine ? `<ul>${dateLine}${reasons.map(r => `<li><b>${esc(r.label)}</b> ${r.html}</li>`).join('')}</ul>`
-        : `<div class="wb-none">Your words are spread across its details (I ignore spaces, so “600 V” finds 600V).</div>`}</div>`;
-    w.classList.remove('show'); void w.offsetWidth;
-    const W = 340, H = w.offsetHeight || 140;
-    w.style.left = Math.max(8, Math.min(innerWidth - W - 8, mx + 18)) + 'px';
-    w.style.top = Math.max(8, above ? (my - H - 40 > 60 ? my - H - 40 : my + 40) : my + 18 + H > innerHeight ? my - H - 12 : my + 18) + 'px';
-    w.classList.add('show');
-  }
-  if (WHY_OK) {
-    let lastX = 0, lastY = 0;
-    document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
-    document.addEventListener('mouseover', e => {
-      const el = e.target.closest && e.target.closest('#main [data-why]');
-      if (el === whyFor) return;
-      whyHide();
-      if (!el || !$('search') || !$('search').value.trim() || document.body.classList.contains('sheet-open')) return;
-      whyFor = el;
-      whyT = setTimeout(() => { if (whyFor === el) whyShow(el, lastX, lastY); }, 450);
-    });
-    document.addEventListener('mousedown', whyHide, true);
-    window.addEventListener('scroll', whyHide, { passive: true, capture: true });
-  }
-  (() => {
-    let t = 0, x0 = 0, y0 = 0, el = null, shown = false;
-    const cancel = () => { clearTimeout(t); el = null; };
-    document.addEventListener('touchstart', e => {
-      if (shown) { shown = false; whyHide(); }
-      cancel();
-      const target = e.target.closest && e.target.closest('#main [data-why]');
-      if (!target || e.touches.length > 1 || !$('search') || !$('search').value.trim() || document.body.classList.contains('sheet-open')) return;
-      el = target; x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
-      t = setTimeout(() => { if (!el) return; whyFor = el; whyShow(el, Math.max(8, x0 - 170), y0, true); shown = true;
-        if (navigator.vibrate) try { navigator.vibrate(12); } catch (er) {  } }, 520);
-    }, { passive: true });
-    document.addEventListener('touchmove', e => { if (el && Math.hypot(e.touches[0].clientX - x0, e.touches[0].clientY - y0) > 10) cancel(); }, { passive: true });
-    document.addEventListener('touchend', e => { if (shown && e.cancelable) e.preventDefault(); cancel(); }, { passive: false });
-    document.addEventListener('touchcancel', cancel, { passive: true });
-    document.addEventListener('contextmenu', e => { if (shown || (e.target.closest && e.target.closest('#main [data-why]') && $('search') && $('search').value.trim())) e.preventDefault(); });
-    window.addEventListener('scroll', () => { if (shown) { shown = false; whyHide(); } cancel(); }, { passive: true, capture: true });
-  })();
-  const CH_ARR_OK = window.matchMedia && matchMedia('(hover: hover) and (pointer: fine)').matches;
-  function chipArrowsUpdate(row) {
-    const l = row.querySelector(':scope > .ch-arr.l'), r = row.querySelector(':scope > .ch-arr.r');
-    if (!l || !r) return;
-    const max = row.scrollWidth - row.clientWidth;
-    l.classList.toggle('show', row.scrollLeft > 2);
-    r.classList.toggle('show', max > 2 && row.scrollLeft < max - 2);
-  }
-  const chArrRows = new WeakSet();
-  function chipArrows() {
-    if (!CH_ARR_OK) return;
-    document.querySelectorAll('.chips, .hscroll').forEach(row => {
-      if (row.querySelector(':scope > .ch-arr.l') && row.lastElementChild && row.lastElementChild.classList.contains('ch-arr')) return chipArrowsUpdate(row);
-      row.querySelectorAll(':scope > .ch-arr').forEach(b => b.remove());
-      const mk = (cls, txt, dir) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'ch-arr ' + cls; b.textContent = txt;
-        b.setAttribute('aria-label', dir < 0 ? 'Scroll left' : 'Scroll right'); b.tabIndex = -1;
-        b.onclick = e => { e.stopPropagation(); row.scrollBy({ left: dir * Math.max(120, row.clientWidth * .8), behavior: 'smooth' }); }; return b; };
-      row.prepend(mk('l', '‹', -1)); row.append(mk('r', '›', 1));
-      if (!chArrRows.has(row)) { chArrRows.add(row); row.addEventListener('scroll', () => chipArrowsUpdate(row), { passive: true }); }
-      chipArrowsUpdate(row);
-    });
-  }
-  if (CH_ARR_OK) {
-    let chT = 0;
-    new MutationObserver(() => { if (!chT) chT = requestAnimationFrame(() => { chT = 0; chipArrows(); }); }).observe(document.body, { childList: true, subtree: true });
-    window.addEventListener('resize', () => document.querySelectorAll('.chips, .hscroll').forEach(chipArrowsUpdate));
-    chipArrows();
-    let drag = null, eatClick = false;
-    document.addEventListener('pointerdown', e => {
-      if (e.pointerType !== 'mouse' || e.button !== 0) return;
-      const row = e.target.closest('.chips, .hscroll');
-      if (!row || e.target.closest('.ch-arr, input, select, textarea') || row.scrollWidth <= row.clientWidth + 2) return;
-      drag = { row, x: e.clientX, left: row.scrollLeft, moved: false };
-    });
-    window.addEventListener('pointermove', e => {
-      if (!drag) return;
-      const dx = e.clientX - drag.x;
-      if (!drag.moved && Math.abs(dx) < 6) return;
-      if (!drag.moved) { drag.moved = true; drag.row.classList.add('ch-drag'); try { getSelection().removeAllRanges(); } catch (er) {  } }
-      drag.row.scrollLeft = drag.left - dx;
-    });
-    const endDrag = () => { if (!drag) return; if (drag.moved) { eatClick = true; setTimeout(() => { eatClick = false; }, 0); drag.row.classList.remove('ch-drag'); } drag = null; };
-    window.addEventListener('pointerup', endDrag);
-    window.addEventListener('pointercancel', endDrag);
-    document.addEventListener('click', e => { if (eatClick) { eatClick = false; e.preventDefault(); e.stopPropagation(); } }, true);
-  }
-  if ($('appVer')) $('appVer').textContent = 'v' + APP_VERSION;
-  setTimeout(() => { const n = document.querySelector('header .bot-name.bi-pre'); if (n) n.classList.remove('bi-pre'); }, 4000);
-  if (currentSkin() !== 'classic') setSkin(currentSkin());
-  load();

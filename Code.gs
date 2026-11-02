@@ -2313,6 +2313,50 @@ function getComments(key) {
 
 // ----- Comments on orders -----
 // Same idea as item comments: stored in the "Order Comments" tab, newest first, people delete only their own.
+// 💬 Comments on a note: its owner and everyone it @mentions can read and add them (the same people who can open it).
+// Kept in a hidden "Note Comments" tab. A new one lights up for the others right away (and @mentions in it too).
+const NOTE_COMMENTS_SHEET = 'Note Comments';
+const NOTE_COMMENT_HEADERS = ['Timestamp', 'User', 'Note ID', 'Comment', 'Comment ID'];
+function noteCommentsSheet_() { const sh = tabWithHeaders_(NOTE_COMMENTS_SHEET, NOTE_COMMENT_HEADERS); try { if (!sh.isSheetHidden()) sh.hideSheet(); } catch (e) { /* stays visible */ } return sh; }
+function readNoteComments_() {
+  const sh = noteCommentsSheet_(), last = sh.getLastRow(); if (last < 2) return [];
+  return sh.getRange(2, 1, last - 1, NOTE_COMMENT_HEADERS.length).getValues().map((r, i) => ({ row: i + 2, timestamp: fmtTime_(r[0]), user: String(r[1]), noteId: String(r[2]), text: String(r[3]), id: String(r[4]) })).filter(c => c.id);
+}
+/** Comments on a note you own or are @mentioned in, oldest first (like a conversation). */
+function getNoteComments(noteId) {
+  requireRole_('Viewer');
+  sharedNote_(noteId);   // refuses anyone who can't open the note
+  const rx = reactionsByComment_();
+  return { me: currentUser_(), comments: readNoteComments_().filter(c => c.noteId === String(noteId)).map(c => ({ id: c.id, timestamp: c.timestamp, user: c.user, text: c.text, reactions: rx[c.id] || [] })) };
+}
+function addNoteComment(noteId, text) {
+  requireRole_('Viewer');
+  text = String(text || '').trim();
+  if (!text) throw new Error('Write a comment first.');
+  if (text.length > MAX_COMMENT) throw new Error('Comments can be up to ' + MAX_COMMENT + ' characters.');
+  const n = sharedNote_(noteId), me = currentUser_().toLowerCase();
+  return withLock_(() => {
+    noteCommentsSheet_().appendRow([new Date(), currentUser_(), String(noteId), asText_(text), Utilities.getUuid()]);
+    // everyone on the note (its owner and the people it mentions) hears about it, plus anyone @mentioned in the comment
+    const who = new Set([n.owner]); String(n.text || '').replace(/@\{([^}\s]+)\}/g, (m, e) => { who.add(e.toLowerCase()); return m; });
+    who.delete(me);
+    bumpPulse_([...who].map(e => '@{' + e + '}').join(' ') + ' ' + text);
+    return getNoteComments(noteId);
+  });
+}
+/** Deletes one of your own comments on a note (the note's owner can delete any on their note). */
+function deleteNoteComment(commentId) {
+  requireRole_('Viewer');
+  return withLock_(() => {
+    const c = readNoteComments_().find(x => x.id === String(commentId));
+    if (!c) throw new Error('That comment was already deleted.');
+    const n = sharedNote_(c.noteId), me = currentUser_().toLowerCase();
+    if (c.user.toLowerCase() !== me && n.owner !== me) throw new Error('You can only delete your own comments.');
+    noteCommentsSheet_().deleteRow(c.row);
+    return getNoteComments(c.noteId);
+  });
+}
+
 const ORDER_COMMENTS_SHEET = 'Order Comments';
 const ORDER_COMMENT_HEADERS = ['Timestamp', 'User', 'Order #', 'Project', 'Comment', 'Comment ID'];
 const orderCommentsSheet_ = () => tabWithHeaders_(ORDER_COMMENTS_SHEET, ORDER_COMMENT_HEADERS);
@@ -2402,12 +2446,14 @@ function reactionsByComment_(rows) {
 
 /** Adds your reaction (or removes it if it's already there). Returns { commentId, reactions } for that comment. */
 function toggleReaction(commentId, emoji) {
-  requireRole_('Editor');
+  requireRole_('Viewer');   // 👍 everyone who can read a comment can react to it (view-only people too)
   commentId = String(commentId || ''); emoji = String(emoji || '');
   if (!isEmoji_(emoji) && !isCemo_(emoji)) throw new Error('Reactions must be a single emoji.');
   return withLock_(() => {
     if (!readComments_(commentsSheet_()).some(c => c.id === commentId) && !readOrderComments_().some(c => c.id === commentId)) {
-      throw new Error('That comment was deleted.');
+      const nc = readNoteComments_().find(c => c.id === commentId);   // 💬 a note's comment: only for people who can open that note
+      if (!nc) throw new Error('That comment was deleted.');
+      sharedNote_(nc.noteId);
     }
     const me = currentUser_(), sheet = reactionsSheet_();
     const rows = readReactions_();
