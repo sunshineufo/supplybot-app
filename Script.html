@@ -1404,6 +1404,8 @@
     if (gearView === 'results') return gearResultsHtml();
     const on = gearItems(), all = profBlocks();
     const hideRow = `<button role="menuitem" class="gm-hide" onclick="setPinsHidden(true)"><span>🙈</span><span><b>Hide all pins</b><small>One small 📌 in the top bar brings them back</small></span></button>`
+      + (cgAccess() ? `<button role="menuitem" onclick="gearMenuClose(); openCountGrid()"><span>🧮</span><span><b>Count sheet</b><small>Starting Qty and Available Today${cgCanEdit() ? '' : ' · view only'}</small></span></button>` : '')
+      + `<button role="menuitemcheckbox" aria-checked="${pinCapsOn()}" class="gm-tog ${pinCapsOn() ? 'on' : ''}" onclick="setPinCaps(!pinCapsOn())"><span>🏷</span><span><b>Pin captions</b><small>Name and key fact under each pin</small></span><i aria-hidden="true"></i></button>`
       + `<button role="menuitemcheckbox" aria-checked="${qfabOn()}" class="gm-tog ${qfabOn() ? 'on' : ''}" onclick="setQfab(!qfabOn())"><span>＋</span><span><b>Quick-create button</b><small>New order, note or item from any screen</small></span><i aria-hidden="true"></i></button>`
       + (tab === 'log' || tab === 'reports' ? '' : `<button role="menuitemcheckbox" aria-checked="${!chipsOff()}" class="gm-tog ${chipsOff() ? '' : 'on'}" onclick="setChipsOff(!chipsOff())"><span>⚲</span><span><b>${tab === 'orders' ? 'Status' : 'Location'} filter row</b><small>${tab === 'orders' ? 'All / Drafts / Shipped / Cancelled' : 'The location chips'} at the top of this screen</small></span><i aria-hidden="true"></i></button>`);
     if (gearEditing) return `<div class="gm-head">Shortcuts in this menu</div>` + all.map(b => `<button role="menuitemcheckbox" aria-checked="${on.includes(b.k)}" class="gm-tog ${on.includes(b.k) ? 'on' : ''}" onclick="gearToggle('${b.k}')"><span>${b.ic}</span><span><b>${esc(b.label)}</b></span><i aria-hidden="true"></i></button>`).join('')
@@ -1463,7 +1465,86 @@
     syncTagPinsActive();
     if ($('sheet') && $('sheet').dataset.panel === 'profile' && $('pinMgr')) $('pinMgr').innerHTML = pinMgrHtml();
     if (gearView && $('gearMenu')) gearRefresh();
+    pinCapsPaint();
   }
+  const pinCapsOn = () => { try { return localStorage.getItem(emoKey('pinCaps')) === '1'; } catch (e) { return false; } };
+  function setPinCaps(v) {
+    try { localStorage.setItem(emoKey('pinCaps'), v ? '1' : '0'); } catch (e) {  }
+    renderPins(); if ($('gearMenu')) gearRefresh();
+    if ($('sheet').dataset.panel === 'profile') { const top = $('sheet').scrollTop; renderProfile(); $('sheet').scrollTop = top; }
+    toast(v ? '🏷 Pin captions on' : 'Pin captions off');
+  }
+  const capDay = d => { const t = new Date(/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d + 'T12:00:00' : d); return isNaN(t) ? '' : t.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+  function pinFact(p, tight) {
+    if (p.tag) {
+      const k = String(p.key), n = p.kind === 'order' ? (orders || []).filter(o => (o.tags || []).some(t => tagKey(t) === k)).length : (items || []).filter(i => (i.tags || []).some(t => tagKey(t) === k)).length;
+      return [n + ' ' + (p.kind === 'order' ? 'order' : 'item') + (n === 1 ? '' : 's'), ''];
+    }
+    if (p.t === 'item') { const it = items.find(x => x.key === p.ref); if (!it) return ['', ''];
+      if (!(it.quantity > 0)) return ['Out of stock', 'bad'];
+      const held = heldOf(it), after = afterShip(it);
+      if (lowGreen(it)) return [tight ? `Low · ${Math.max(after, 0)}` : `Low · ${Math.max(after, 0)} after drafts`, 'bad'];
+      return [held ? (tight ? `${it.quantity} → ${after}` : `${it.quantity} avail · ${after} after drafts`) : `${it.quantity} ${tight ? 'avail' : 'available'}`, after < 0 ? 'bad' : 'ok']; }
+    if (p.t === 'order') { const o = orderByNo(p.ref); if (!o) return ['', ''];
+      if (o.status === 'Shipped') return ['Shipped' + (o.shipped ? ' ' + capDay(o.shipped) : ''), 'ok'];
+      if (o.status === 'Cancelled') return ['Cancelled', ''];
+      const late = o.shipDate && o.shipDate < new Date().toISOString().slice(0, 10);
+      return [o.status + (o.shipDate ? (tight ? (late ? ' · late' : ' · ' + capDay(o.shipDate)) : (late ? ' · was due ' : ' · ships ') + capDay(o.shipDate)) : ''), late ? 'bad' : 'warn']; }
+    if (p.t === 'contact') { const c = (contacts || []).find(x => x.id === p.ref); return c ? [c.phone || c.company || c.type || c.email || '', ''] : ['', '']; }
+    if (p.t === 'note') { const n = (noteList || notesCacheGet() || []).find(x => x.id === p.ref); if (!n) return ['', ''];
+      const run = (tallyOf(n).rows || []).find(r => r.u === 'time' && r.sd && !r.ed); if (run) return ['⏱ ' + tlElapsed(run).replace(/ \d+s$/, ''), 'bad'];
+      return hasNoteValue(n) ? [money(noteValueOf(n)), ''] : [capDay(n.updated) ? 'Edited ' + capDay(n.updated) : 'Note', '']; }
+    if (p.t === 'link') { try { return [new URL(cleanUrl(p.ref)).hostname.replace(/^www\./, ''), '']; } catch (e) { return ['Link', '']; } }
+    if (p.t === 'return' || p.t === 'po') return [p.t === 'po' ? 'PO received' : 'Return', ''];
+    if (p.t === 'filter') return ['Saved filter', ''];
+    if (p.t === 'catalog') return ['Catalog', ''];
+    if (p.t === 'tool') return ['Shortcut', ''];
+    return ['', ''];
+  }
+  const capName = p => String(p.label || '').replace(/^(ORD-\d{4}-)(\d+) · /, '#$2 · ').trim();
+  const PIN_SEL = '#pinBar [data-pk], #pinBar [data-tk], #suiPins [data-pk], #suiPins [data-tk], #pinFloat [data-pk], #pinFloat [data-tk], #pinFree [data-pk], #pinFree [data-tk]';
+  let capRaf = 0, capSeenAt = 0;
+  function pinOf(b) {
+    if (b.dataset.tk) { const [kind, ...k] = b.dataset.tk.split('|'), t = tagPins.find(x => x.kind === kind && x.key === k.join('|')); return t ? Object.assign({ tag: true }, t) : null; }
+    const [t, ...r] = String(b.dataset.pk || '').split('|'), ref = r.join('|'); return pins.find(x => x.t === t && String(x.ref) === ref) || null;
+  }
+  function pinCapsPaint() {
+    const on = pinCapsOn() && !pinsHidden();
+    let box = $('pinCaps');
+    if (!on) { if (box) box.remove(); return; }
+    if (!box) { box = document.createElement('div'); box.id = 'pinCaps'; box.className = 'pin-caps'; box.setAttribute('aria-hidden', 'true'); document.body.appendChild(box); }
+    const btns = [...document.querySelectorAll(PIN_SEL)], keep = new Set();
+    btns.forEach(b => {
+      const p = pinOf(b); if (!p) return;
+      const k = (b.dataset.pk || 'tag|' + b.dataset.tk) + '@' + (b.closest('#pinBar, #suiPins, #pinFloat, #pinFree') || {}).id; keep.add(k);
+      let cap = [...box.children].find(c => c.dataset.k === k);
+      if (!cap) { cap = document.createElement('span'); cap.className = 'pin-cap'; cap.dataset.k = k; box.appendChild(cap); }
+      cap._btn = b; cap.classList.toggle('tight', !!b.closest('#pinBar, #suiPins'));
+      const [fact, tone] = pinFact(p, !!b.closest('#pinBar, #suiPins')), html = `<b>${esc((p.tag ? '🏷 ' : '') + capName(p))}</b>${fact ? `<i class="${tone}">${esc(fact)}</i>` : ''}`;
+      if (cap.innerHTML !== html) cap.innerHTML = html;
+    });
+    [...box.children].forEach(c => { if (!keep.has(c.dataset.k)) c.remove(); });
+    capSeenAt = 0;
+    if (!capRaf) capRaf = requestAnimationFrame(pinCapsFollow);
+  }
+  function pinCapsFollow() {
+    capRaf = 0;
+    const box = $('pinCaps'); if (!box || !box.children.length) return;
+    const look = Date.now() - capSeenAt > 300; if (look) capSeenAt = Date.now();
+    let row = 0;
+    [...box.children].forEach(c => {
+      const b = c._btn, r = b && b.isConnected ? b.getBoundingClientRect() : null;
+      const dy = c.classList.contains('tight') ? (row++ % 2) * 25 : 0;
+      if (!r || !r.width || r.bottom < 0 || r.top > innerHeight) { c.classList.remove('on'); return; }
+      if (look) { const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); c._hid = !(hit && (b === hit || b.contains(hit))); }
+      if (c._hid) { c.classList.remove('on'); return; }
+      const w = c.offsetWidth, x = Math.max(4, Math.min(innerWidth - w - 4, r.left + r.width / 2 - w / 2));
+      c.style.transform = `translate(${Math.round(x)}px, ${Math.round(r.bottom + 2 + dy)}px)`; c.classList.add('on');
+    });
+    if (document.visibilityState === 'visible') capRaf = requestAnimationFrame(pinCapsFollow);
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && $('pinCaps') && !capRaf) capRaf = requestAnimationFrame(pinCapsFollow); });
+  setInterval(() => { if (pinCapsOn() && document.visibilityState === 'visible') pinCapsPaint(); }, 4000);
   const freeKey = p => p.tag ? 'tag:' + p.kind + ':' + p.key : p.t + ':' + p.ref;
   function pinEmos() { try { return JSON.parse(localStorage.getItem(emoKey('pinEmojis'))) || {}; } catch (e) { return {}; } }
   function pinFace(p) {
@@ -2195,9 +2276,9 @@
       const pin = [...document.querySelectorAll(`[data-pk="item|${CSS.escape(b.dataset.k)}"]`)].find(e => e.offsetParent || e.getClientRects().length);
       const r = pin && pin.getBoundingClientRect();
       if (!r || !r.width) { b.classList.remove('on'); return; }
-      const w = b.offsetWidth, h = b.offsetHeight, below = r.top < h + 24;
+      const w = b.offsetWidth, h = b.offsetHeight, below = r.top < h + 24, capRoom = below && pinCapsOn() ? (pin.closest('#pinBar, #suiPins') ? 54 : 30) : 0;
       const left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
-      b.style.transform = `translate(${Math.round(left)}px, ${Math.round(below ? r.bottom + 10 : r.top - h - 10)}px)`;
+      b.style.transform = `translate(${Math.round(left)}px, ${Math.round(below ? r.bottom + 10 + capRoom : r.top - h - 10)}px)`;
       b.style.setProperty('--tail', Math.max(14, Math.min(w - 14, r.left + r.width / 2 - left)) + 'px');
       b.classList.toggle('below', below); b.classList.add('on');
     });
@@ -2331,10 +2412,10 @@
   const chipsKind = () => tab === 'orders' ? 'orders' : 'items';
   const chipsHidden = k => { try { return localStorage.getItem(emoKey('chipsHide:' + (k || chipsKind()))) === '1'; } catch (e) { return false; } };
   const chipsOff = k => { try { return localStorage.getItem(emoKey('chipsOff:' + (k || chipsKind()))) === '1'; } catch (e) { return false; } };
-  function setChipsOff(v) {
-    try { localStorage.setItem(emoKey('chipsOff:' + chipsKind()), v ? '1' : '0'); } catch (e) {  }
+  function setChipsOff(v, kind) {
+    try { localStorage.setItem(emoKey('chipsOff:' + (kind || chipsKind())), v ? '1' : '0'); } catch (e) {  }
     renderChips(); if ($('gearMenu')) gearRefresh();
-    toast(v ? 'Filter row off (⚙ brings it back)' : 'Filter row on');
+    toast(v ? 'Filter row off (⚙ or My profile → 📌 Pins brings it back)' : 'Filter row on');
   }
   function setChipsHidden(v) {
     try { localStorage.setItem(emoKey('chipsHide:' + chipsKind()), v ? '1' : '0'); } catch (e) {  }
@@ -6287,6 +6368,7 @@
       <div class="muted-note" style="padding:0 0 6px">${esc(what)} · One row per item goes at the top of
         <a href="${esc(r.url)}" target="_blank" rel="noopener">Supply Chain 2026 → Shipping ↗</a>. Nothing is added until you tap <b>Add to tracker</b>.</div>
       ${r.logged ? `<div class="pm-warn">This ${r.isPo ? 'PO' : ret ? 'return' : 'order'} is already in the tracker: ${esc(trackerText(r.logged).replace(/^🧾 Logged in the tracker /, ''))}. Adding again makes a second set of rows.</div>` : ''}
+      ${trkSourceHtml()}
       <div class="trk-head">${TRK_HEAD.map(([k, label]) => trkHeadField(k, label)).join('')}</div>
       <h3 class="trk-h">${r.lines.length} item${r.lines.length === 1 ? '' : 's'} <span class="trk-miss" id="trkMiss">${trkMissText()}</span></h3>
       ${r.lines.map(line).join('')}
@@ -6295,6 +6377,45 @@
         <button class="btn primary" id="trkAdd" onclick="sendTracker()">Add to tracker</button>
       </div>`);
     $('sheet').dataset.panel = 'tracker';
+  }
+  let trkSrcOpen = true;
+  function copyVal(text, what) {
+    const t = String(text ?? ''); if (!t) return;
+    const done = () => toast('📋 Copied' + (what ? ' ' + what : '') + ': ' + (t.length > 40 ? t.slice(0, 40) + '…' : t));
+    const old = () => { const a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(a); a.select(); try { document.execCommand('copy'); done(); } catch (e) { toast('Couldn’t copy here. Press and hold the text to copy it.', true); } a.remove(); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, old); else old();
+  }
+  function trkSource() {
+    const r = trk, ret = r.kind === 'return', o = !ret && orderByNo(r.orderNo);
+    const src = ret ? (r.past || (rcvDone && rcvDone.done) || {}) : (o || {});
+    const day = v => v ? fmtDay(v) : '';
+    const facts = ret ? [r.isPo ? ['PO #', src.po || r.po] : ['Returned from', src.from], r.isPo ? ['Vendor', src.vendor || r.vendor] : ['Order #', src.orderNo],
+        !r.isPo && ['Vendor / company', src.vendor], ['PM', src.pm], ['Point of contact', src.contact], !r.isPo && ['Reason', src.reason], ['Note', src.note],
+        ['Received', src.timestamp ? when(src.timestamp) : ''], ['By', src.user ? personName(src.user) : '']]
+      : [['Order #', o.orderNo || r.orderNo], ['Project name', o.projectName], ['Project #', o.projectNo], ['Activity type', o.activityType], ['PM', o.pm],
+        ['Point of contact', o.contact], ['Company / vendor', o.vendor], ['Freight', o.freight], ['From', o.fromLocation], ['To', o.toLocation], ['Ship to', o.shipTo],
+        ['Order date', day(o.orderDate)], ['Ship date', day(o.shipDate)], ['Delivery date', day(o.deliveryDate)]];
+    const lines = (r.lines || []).map(l => ({ name: l.name, part: l.partNumber, qty: l.qty, job: l.job, ep: l.network }));
+    const files = ret ? (src.links || []).map(l => ['🔗 ' + (l.label || 'Link'), l.url]).concat((src.pdfs || []).map(f => [(f.kind === 'photo' ? '📷 ' : '📄 ') + f.name, f.url])) : [];
+    return { facts: facts.filter(x => x && x[1] != null && String(x[1]).trim() !== ''), lines, files };
+  }
+  function trkSourceHtml() {
+    const s = trkSource(), chip = (v, what) => `<button type="button" class="cp-chip" onclick="copyVal(${esc(JSON.stringify(String(v)))}, ${esc(JSON.stringify(what || ''))})" title="Tap to copy">${esc(v)}<i aria-hidden="true">⧉</i></button>`;
+    return `<details class="trk-src" ${trkSrcOpen ? 'open' : ''} ontoggle="trkSrcOpen = this.open">
+      <summary><b>📋 What you're logging</b><small>Tap any value to copy it</small></summary>
+      <div class="trk-src-b">
+        ${s.facts.map(([k, v]) => `<div class="cp-row"><span>${esc(k)}</span>${chip(v, k)}</div>`).join('')}
+        ${s.lines.length ? `<div class="cp-h">Items · ${s.lines.length}</div>${s.lines.map(l => `<div class="cp-item"><div class="cp-in">${chip(l.name, 'name')}</div>
+          <div class="cp-meta">${l.part ? `<span>Part #</span>${chip(l.part, 'part #')}` : ''}<span>Qty</span>${chip(l.qty, 'qty')}${l.job ? `<span>Job</span>${chip(l.job, 'job #')}` : ''}${l.ep ? `<span>Endpoints</span>${chip(l.ep, 'endpoints')}` : ''}</div></div>`).join('')}` : ''}
+        ${s.files.length ? `<div class="cp-h">Attached</div><div class="cp-files">${s.files.map(([n, u]) => `<span class="cp-file"><a href="${esc(u)}" target="_blank" rel="noopener">${esc(n)}</a><button type="button" onclick="copyVal(${esc(JSON.stringify(u))}, 'link')" aria-label="Copy the link">⧉</button></span>`).join('')}</div>` : ''}
+        <button type="button" class="btn ghost cp-all" onclick="trkCopyAll()">📋 Copy all as text</button>
+      </div></details>`;
+  }
+  function trkCopyAll() {
+    const s = trkSource();
+    copyVal(s.facts.map(([k, v]) => k + ': ' + v).concat(s.lines.length ? ['', 'Items:'] : [], s.lines.map(l => `${l.qty} × ${l.name}${l.part ? ' (' + l.part + ')' : ''}${l.job ? ' · Job ' + l.job : ''}${l.ep ? ' · ' + l.ep : ''}`),
+      s.files.length ? ['', 'Attached:'] : [], s.files.map(([n, u]) => n.replace(/^\S+ /, '') + ' ' + u)).join('\n'), 'everything');
   }
   const trkMissText = () => { const n = trk.lines.filter(l => !l.product).length; return n ? '· ' + n + ' without a Product' : ''; };
   function trkProduct(i, el) {
@@ -6374,178 +6495,4 @@
         ${c ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:6px 0" onclick="removeCost('${esc(no)}', '${esc(id)}')">Remove</button>` : ''}
       </div>`;
     setTimeout(() => $('costLabel') && $(c ? 'costAmt' : 'costLabel').focus(), 50);
-  }
-  function orderMoneySaved(no, saved) {
-    const i = orders.findIndex(o => o.orderNo === no);
-    if (i >= 0) orders[i] = Object.assign(orders[i], saved);
-    const o = orderByNo(no);
-    if (o && $('sheet').dataset.order === no) {
-      if ($('costBox')) $('costBox').innerHTML = costsHtml(o);
-      if ($('shipBox')) $('shipBox').innerHTML = shippingHtml(o);
-      if ($('grandBox')) $('grandBox').innerHTML = grandTotalHtml(o.ourCost, o.shippingCost, o.extraCosts);
-    }
-    render();
-  }
-  async function saveCost(no, id) {
-    const label = $('costLabel').value.trim(), amt = $('costAmt').value.trim(), n = parseMoney(amt);
-    if (!label) { $('costLabel').focus(); return toast('Enter what the cost is for', true); }
-    if (n == null || n === undefined) { $('costAmt').focus(); return toast('Enter an amount, like 250 or $1,250.50', true); }
-    $('costSave').disabled = true;
-    try {
-      const saved = id ? await api('updateOrderCost', id, label, amt) : await api('addOrderCost', no, label, amt);
-      orderMoneySaved(no, saved);
-      toast(id ? 'Cost updated' : 'Cost added');
-    } catch (e) { if ($('costSave')) $('costSave').disabled = false; fail(e); }
-  }
-  async function removeCost(no, id) {
-    const c = ((orderByNo(no) || {}).extraCosts || []).find(x => x.id === id);
-    if (!confirm(`Remove ${c ? c.label + ' (' + money(c.amount) + ')' : 'this cost'} from ${no}?`)) return;
-    try { orderMoneySaved(no, await api('deleteOrderCost', id)); toast('Cost removed'); } catch (e) { fail(e); }
-  }
-  function shippingHtml(o) {
-    if (o.shippingCost == null) return `<button class="attach-btn" onclick="editShipping('${esc(o.orderNo)}')">💲 Add shipping cost</button>`;
-    return `<div class="track"><span style="flex:1"><div class="lab">Shipping cost</div><b style="font-size:17px">${money(o.shippingCost)}</b></span>
-        <button onclick="editShipping('${esc(o.orderNo)}')">Edit</button></div>`;
-  }
-  function editShipping(no) {
-    if (viewOnly()) return;
-    const o = orderByNo(no);
-    $('shipBox').innerHTML = `<label>Shipping Cost</label>
-      <div class="track-edit">
-        <input class="field" id="shipInput" inputmode="decimal" placeholder="$0.00" value="${o.shippingCost == null ? '' : esc(o.shippingCost)}">
-        <button class="btn primary" id="shipSave" onclick="saveShipping('${esc(no)}')">Save</button>
-      </div>
-      <div style="display:flex;gap:16px;margin-top:6px">
-        <button style="background:none;border:0;color:var(--muted);padding:6px 0" onclick="$('shipBox').innerHTML = shippingHtml(orderByNo('${esc(no)}'))">Cancel</button>
-        ${o.shippingCost != null ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:6px 0" onclick="$('shipInput').value='';saveShipping('${esc(no)}')">Remove</button>` : ''}
-      </div>`;
-    setTimeout(() => $('shipInput') && $('shipInput').focus(), 50);
-  }
-  async function saveShipping(no) {
-    const v = $('shipInput').value.trim();
-    if (parseMoney(v) === undefined) return toast('Enter an amount, like 250 or $1,250.50', true);
-    $('shipSave').disabled = true;
-    try {
-      const saved = await api('setOrderShipping', no, v);
-      orderMoneySaved(no, saved); toast(v ? 'Shipping cost saved' : 'Shipping cost removed');
-    } catch (e) { if ($('shipSave')) $('shipSave').disabled = false; fail(e); }
-  }
-  const DATE_KINDS = {
-    shipDate: { box: 'shipDateBox', fn: 'setOrderShipDate', icon: '🚚', label: 'Expected pickup / ship date', field: 'Expected Pickup / Ship Date' },
-    deliveryDate: { box: 'deliveryBox', fn: 'setOrderDeliveryDate', icon: '📅', label: 'Delivery date', field: 'Delivery Date' },
-  };
-  function dateHtml(o, kind) {
-    const k = DATE_KINDS[kind];
-    if (!o[kind]) return `<button class="attach-btn" onclick="editDate('${esc(o.orderNo)}', '${kind}')">${k.icon} Add ${k.label.toLowerCase()}</button>`;
-    return `<div class="track"><span style="flex:1"><div class="lab">${k.label}</div><b style="font-size:17px">${k.icon} ${esc(fmtDay(o[kind]))}</b></span>
-        <button onclick="editDate('${esc(o.orderNo)}', '${kind}')">Edit</button></div>`;
-  }
-  function editDate(no, kind) {
-    if (viewOnly()) return;
-    const o = orderByNo(no), k = DATE_KINDS[kind];
-    $(k.box).innerHTML = `<label>${k.field}</label>
-      <div class="track-edit">
-        <input class="field" id="${kind}Input" type="date" value="${esc(o[kind] || '')}">
-        <button class="btn primary" id="${kind}Save" onclick="saveDate('${esc(no)}', '${kind}')">Save</button>
-      </div>
-      <div style="display:flex;gap:16px;margin-top:6px">
-        <button style="background:none;border:0;color:var(--muted);padding:6px 0" onclick="$('${k.box}').innerHTML = dateHtml(orderByNo('${esc(no)}'), '${kind}')">Cancel</button>
-        ${o[kind] ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:6px 0" onclick="$('${kind}Input').value='';saveDate('${esc(no)}', '${kind}')">Remove</button>` : ''}
-      </div>`;
-    setTimeout(() => $(kind + 'Input') && $(kind + 'Input').focus(), 50);
-  }
-  async function saveDate(no, kind) {
-    if (viewOnly()) return;
-    const k = DATE_KINDS[kind], v = $(kind + 'Input').value.trim();
-    if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return toast('Pick a date', true);
-    $(kind + 'Save').disabled = true;
-    try {
-      const saved = await api(k.fn, no, v);
-      const i = orders.findIndex(o => o.orderNo === no);
-      if (i >= 0) orders[i] = Object.assign(orders[i], saved);
-      if ($('sheet').dataset.order === no && $(k.box)) $(k.box).innerHTML = dateHtml(orders[i], kind);
-      render(); toast(k.label + (v ? ' saved' : ' removed'));
-    } catch (e) { if ($(kind + 'Save')) $(kind + 'Save').disabled = false; fail(e); }
-  }
-  const mapQuery = a => encodeURIComponent(String(a).replace(/\n+/g, ', '));
-  const mapEmbedUrl = a => 'https:\/\/maps.google.com/maps?q=' + mapQuery(a) + '&z=15&output=embed';
-  const mapOpenUrl = a => 'https:\/\/www.google.com/maps/search/?api=1&query=' + mapQuery(a);
-  const mapDirectionsUrl = a => 'https:\/\/www.google.com/maps/dir/?api=1&destination=' + mapQuery(a);
-  const mapRouteUrl = (pos, a) => 'https:\/\/maps.google.com/maps?saddr=' + pos.lat.toFixed(5) + ',' + pos.lng.toFixed(5) + '&daddr=' + mapQuery(a) + '&output=embed';
-  let myPos = null, myPosError = '', myPosPending = null;
-  const POS_MAX_AGE = 5 * 60 * 1000;
-  function getMyPosition() {
-    if (myPos && Date.now() - myPos.t < POS_MAX_AGE) return Promise.resolve(myPos);
-    if (myPosPending) return myPosPending;
-    myPosPending = new Promise((resolve, reject) => {
-      if (!navigator.geolocation) return reject(new Error('This browser can’t share its location.'));
-      navigator.geolocation.getCurrentPosition(
-        p => resolve(myPos = { lat: p.coords.latitude, lng: p.coords.longitude, t: Date.now() }),
-        e => reject(new Error(e && e.code === 1 ? 'Location permission is off for this app.' : 'Couldn’t get your location right now.')),
-        { enableHighAccuracy: false, timeout: 10000, maximumAge: POS_MAX_AGE });
-    }).catch(e => { myPosError = e.message; throw e; }).finally(() => { myPosPending = null; });
-    return myPosPending;
-  }
-  function routeMap(no) {
-    const o = orderByNo(no);
-    if (!o || !o.shipTo || mapHidden) return;
-    const same = () => $('sheet').dataset.order === no && $('mapFrame') && $('mapFrame').dataset.addr === o.shipTo;
-    getMyPosition().then(pos => {
-      if (!same()) return;
-      const url = mapRouteUrl(pos, o.shipTo);
-      if ($('mapFrame').getAttribute('src') !== url) $('mapFrame').setAttribute('src', url);
-      $('mapStatus').innerHTML = '🧭 Route from your current location';
-    }).catch(e => {
-      if (!same()) return;
-      $('mapStatus').innerHTML = `📍 Showing the address only. ${esc(e.message)} <b>Directions</b> below still works.`;
-    });
-  }
-  let mapHidden = (() => { try { return localStorage.getItem('mapHidden') === '1'; } catch (e) { return false; } })();
-  function toggleMap(no) {
-    mapHidden = !mapHidden;
-    try { localStorage.setItem('mapHidden', mapHidden ? '1' : '0'); } catch (e) {  }
-    const o = orderByNo(no);
-    if (o && $('addrBox')) $('addrBox').innerHTML = addressHtml(o);
-  }
-  function addressHtml(o) {
-    if (o.shipTo && !mapHidden) setTimeout(() => routeMap(o.orderNo), 0);
-    if (!o.shipTo) return `<button class="attach-btn" style="margin-top:12px" onclick="editAddress('${esc(o.orderNo)}')">📍 Add ship-to address</button>`;
-    return `<div class="section-title">Ship to</div>
-      <div class="addr">
-        <div class="addr-top"><div class="addr-text">${esc(o.shipTo)}</div>
-          <button onclick="editAddress('${esc(o.orderNo)}')">Edit</button></div>
-        ${mapHidden ? '' : `<div class="map"><iframe id="mapFrame" data-addr="${esc(o.shipTo)}"
-          src="${esc(myPos && Date.now() - myPos.t < POS_MAX_AGE ? mapRouteUrl(myPos, o.shipTo) : mapEmbedUrl(o.shipTo))}" referrerpolicy="no-referrer-when-downgrade"
-          title="Map to ${esc(o.shipTo.replace(/\n+/g, ', '))}" allowfullscreen></iframe></div>
-          <div class="map-status" id="mapStatus">${myPos && Date.now() - myPos.t < POS_MAX_AGE ? '🧭 Route from your current location' : '📍 Finding your location for directions…'}</div>`}
-        <button class="map-toggle" onclick="toggleMap('${esc(o.orderNo)}')" aria-pressed="${!mapHidden}">${mapHidden ? '🗺 Show map' : 'Hide map'}</button>
-        <div class="addr-links">
-          <a href="${esc(mapOpenUrl(o.shipTo))}" target="_blank" rel="noopener">🗺 Open in Google Maps ↗</a>
-          <a href="${esc(mapDirectionsUrl(o.shipTo))}" target="_blank" rel="noopener">🧭 Directions ↗</a>
-        </div>
-      </div>`;
-  }
-  function editAddress(no) {
-    if (viewOnly()) return;
-    const o = orderByNo(no);
-    $('addrBox').innerHTML = `<div class="section-title">Ship to</div>
-      <textarea class="field" id="addrInput" rows="3" maxlength="300" placeholder="Street, City, State ZIP" autocomplete="street-address">${esc(o.shipTo || '')}</textarea>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-        <button class="btn primary" id="addrSave" style="flex:1" onclick="saveAddress('${esc(no)}')">Save address</button>
-        <button class="btn ghost" onclick="$('addrBox').innerHTML = addressHtml(orderByNo('${esc(no)}'))">Cancel</button>
-      </div>
-      ${o.shipTo ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:8px 0" onclick="$('addrInput').value='';saveAddress('${esc(no)}')">Remove address</button>` : ''}`;
-    setTimeout(() => $('addrInput') && $('addrInput').focus(), 50);
-  }
-  async function saveAddress(no) {
-    if (viewOnly()) return;
-    const v = $('addrInput').value.trim();
-    $('addrSave').disabled = true;
-    try {
-      const saved = await api('setOrderAddress', no, v);
-      const i = orders.findIndex(o => o.orderNo === no);
-      if (i >= 0) orders[i] = Object.assign(orders[i], saved);
-      if ($('sheet').dataset.order === no && $('addrBox')) $('addrBox').innerHTML = addressHtml(orders[i]);
-      render(); toast(v ? 'Address saved' : 'Address removed');
-    } catch (e) { if ($('addrSave')) $('addrSave').disabled = false; fail(e); }
   }

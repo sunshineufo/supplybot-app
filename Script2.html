@@ -1,3 +1,177 @@
+  function orderMoneySaved(no, saved) {
+    const i = orders.findIndex(o => o.orderNo === no);
+    if (i >= 0) orders[i] = Object.assign(orders[i], saved);
+    const o = orderByNo(no);
+    if (o && $('sheet').dataset.order === no) {
+      if ($('costBox')) $('costBox').innerHTML = costsHtml(o);
+      if ($('shipBox')) $('shipBox').innerHTML = shippingHtml(o);
+      if ($('grandBox')) $('grandBox').innerHTML = grandTotalHtml(o.ourCost, o.shippingCost, o.extraCosts);
+    }
+    render();
+  }
+  async function saveCost(no, id) {
+    const label = $('costLabel').value.trim(), amt = $('costAmt').value.trim(), n = parseMoney(amt);
+    if (!label) { $('costLabel').focus(); return toast('Enter what the cost is for', true); }
+    if (n == null || n === undefined) { $('costAmt').focus(); return toast('Enter an amount, like 250 or $1,250.50', true); }
+    $('costSave').disabled = true;
+    try {
+      const saved = id ? await api('updateOrderCost', id, label, amt) : await api('addOrderCost', no, label, amt);
+      orderMoneySaved(no, saved);
+      toast(id ? 'Cost updated' : 'Cost added');
+    } catch (e) { if ($('costSave')) $('costSave').disabled = false; fail(e); }
+  }
+  async function removeCost(no, id) {
+    const c = ((orderByNo(no) || {}).extraCosts || []).find(x => x.id === id);
+    if (!confirm(`Remove ${c ? c.label + ' (' + money(c.amount) + ')' : 'this cost'} from ${no}?`)) return;
+    try { orderMoneySaved(no, await api('deleteOrderCost', id)); toast('Cost removed'); } catch (e) { fail(e); }
+  }
+  function shippingHtml(o) {
+    if (o.shippingCost == null) return `<button class="attach-btn" onclick="editShipping('${esc(o.orderNo)}')">💲 Add shipping cost</button>`;
+    return `<div class="track"><span style="flex:1"><div class="lab">Shipping cost</div><b style="font-size:17px">${money(o.shippingCost)}</b></span>
+        <button onclick="editShipping('${esc(o.orderNo)}')">Edit</button></div>`;
+  }
+  function editShipping(no) {
+    if (viewOnly()) return;
+    const o = orderByNo(no);
+    $('shipBox').innerHTML = `<label>Shipping Cost</label>
+      <div class="track-edit">
+        <input class="field" id="shipInput" inputmode="decimal" placeholder="$0.00" value="${o.shippingCost == null ? '' : esc(o.shippingCost)}">
+        <button class="btn primary" id="shipSave" onclick="saveShipping('${esc(no)}')">Save</button>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:6px">
+        <button style="background:none;border:0;color:var(--muted);padding:6px 0" onclick="$('shipBox').innerHTML = shippingHtml(orderByNo('${esc(no)}'))">Cancel</button>
+        ${o.shippingCost != null ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:6px 0" onclick="$('shipInput').value='';saveShipping('${esc(no)}')">Remove</button>` : ''}
+      </div>`;
+    setTimeout(() => $('shipInput') && $('shipInput').focus(), 50);
+  }
+  async function saveShipping(no) {
+    const v = $('shipInput').value.trim();
+    if (parseMoney(v) === undefined) return toast('Enter an amount, like 250 or $1,250.50', true);
+    $('shipSave').disabled = true;
+    try {
+      const saved = await api('setOrderShipping', no, v);
+      orderMoneySaved(no, saved); toast(v ? 'Shipping cost saved' : 'Shipping cost removed');
+    } catch (e) { if ($('shipSave')) $('shipSave').disabled = false; fail(e); }
+  }
+  const DATE_KINDS = {
+    shipDate: { box: 'shipDateBox', fn: 'setOrderShipDate', icon: '🚚', label: 'Expected pickup / ship date', field: 'Expected Pickup / Ship Date' },
+    deliveryDate: { box: 'deliveryBox', fn: 'setOrderDeliveryDate', icon: '📅', label: 'Delivery date', field: 'Delivery Date' },
+  };
+  function dateHtml(o, kind) {
+    const k = DATE_KINDS[kind];
+    if (!o[kind]) return `<button class="attach-btn" onclick="editDate('${esc(o.orderNo)}', '${kind}')">${k.icon} Add ${k.label.toLowerCase()}</button>`;
+    return `<div class="track"><span style="flex:1"><div class="lab">${k.label}</div><b style="font-size:17px">${k.icon} ${esc(fmtDay(o[kind]))}</b></span>
+        <button onclick="editDate('${esc(o.orderNo)}', '${kind}')">Edit</button></div>`;
+  }
+  function editDate(no, kind) {
+    if (viewOnly()) return;
+    const o = orderByNo(no), k = DATE_KINDS[kind];
+    $(k.box).innerHTML = `<label>${k.field}</label>
+      <div class="track-edit">
+        <input class="field" id="${kind}Input" type="date" value="${esc(o[kind] || '')}">
+        <button class="btn primary" id="${kind}Save" onclick="saveDate('${esc(no)}', '${kind}')">Save</button>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:6px">
+        <button style="background:none;border:0;color:var(--muted);padding:6px 0" onclick="$('${k.box}').innerHTML = dateHtml(orderByNo('${esc(no)}'), '${kind}')">Cancel</button>
+        ${o[kind] ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:6px 0" onclick="$('${kind}Input').value='';saveDate('${esc(no)}', '${kind}')">Remove</button>` : ''}
+      </div>`;
+    setTimeout(() => $(kind + 'Input') && $(kind + 'Input').focus(), 50);
+  }
+  async function saveDate(no, kind) {
+    if (viewOnly()) return;
+    const k = DATE_KINDS[kind], v = $(kind + 'Input').value.trim();
+    if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return toast('Pick a date', true);
+    $(kind + 'Save').disabled = true;
+    try {
+      const saved = await api(k.fn, no, v);
+      const i = orders.findIndex(o => o.orderNo === no);
+      if (i >= 0) orders[i] = Object.assign(orders[i], saved);
+      if ($('sheet').dataset.order === no && $(k.box)) $(k.box).innerHTML = dateHtml(orders[i], kind);
+      render(); toast(k.label + (v ? ' saved' : ' removed'));
+    } catch (e) { if ($(kind + 'Save')) $(kind + 'Save').disabled = false; fail(e); }
+  }
+  const mapQuery = a => encodeURIComponent(String(a).replace(/\n+/g, ', '));
+  const mapEmbedUrl = a => 'https:\/\/maps.google.com/maps?q=' + mapQuery(a) + '&z=15&output=embed';
+  const mapOpenUrl = a => 'https:\/\/www.google.com/maps/search/?api=1&query=' + mapQuery(a);
+  const mapDirectionsUrl = a => 'https:\/\/www.google.com/maps/dir/?api=1&destination=' + mapQuery(a);
+  const mapRouteUrl = (pos, a) => 'https:\/\/maps.google.com/maps?saddr=' + pos.lat.toFixed(5) + ',' + pos.lng.toFixed(5) + '&daddr=' + mapQuery(a) + '&output=embed';
+  let myPos = null, myPosError = '', myPosPending = null;
+  const POS_MAX_AGE = 5 * 60 * 1000;
+  function getMyPosition() {
+    if (myPos && Date.now() - myPos.t < POS_MAX_AGE) return Promise.resolve(myPos);
+    if (myPosPending) return myPosPending;
+    myPosPending = new Promise((resolve, reject) => {
+      if (!navigator.geolocation) return reject(new Error('This browser can’t share its location.'));
+      navigator.geolocation.getCurrentPosition(
+        p => resolve(myPos = { lat: p.coords.latitude, lng: p.coords.longitude, t: Date.now() }),
+        e => reject(new Error(e && e.code === 1 ? 'Location permission is off for this app.' : 'Couldn’t get your location right now.')),
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: POS_MAX_AGE });
+    }).catch(e => { myPosError = e.message; throw e; }).finally(() => { myPosPending = null; });
+    return myPosPending;
+  }
+  function routeMap(no) {
+    const o = orderByNo(no);
+    if (!o || !o.shipTo || mapHidden) return;
+    const same = () => $('sheet').dataset.order === no && $('mapFrame') && $('mapFrame').dataset.addr === o.shipTo;
+    getMyPosition().then(pos => {
+      if (!same()) return;
+      const url = mapRouteUrl(pos, o.shipTo);
+      if ($('mapFrame').getAttribute('src') !== url) $('mapFrame').setAttribute('src', url);
+      $('mapStatus').innerHTML = '🧭 Route from your current location';
+    }).catch(e => {
+      if (!same()) return;
+      $('mapStatus').innerHTML = `📍 Showing the address only. ${esc(e.message)} <b>Directions</b> below still works.`;
+    });
+  }
+  let mapHidden = (() => { try { return localStorage.getItem('mapHidden') === '1'; } catch (e) { return false; } })();
+  function toggleMap(no) {
+    mapHidden = !mapHidden;
+    try { localStorage.setItem('mapHidden', mapHidden ? '1' : '0'); } catch (e) {  }
+    const o = orderByNo(no);
+    if (o && $('addrBox')) $('addrBox').innerHTML = addressHtml(o);
+  }
+  function addressHtml(o) {
+    if (o.shipTo && !mapHidden) setTimeout(() => routeMap(o.orderNo), 0);
+    if (!o.shipTo) return `<button class="attach-btn" style="margin-top:12px" onclick="editAddress('${esc(o.orderNo)}')">📍 Add ship-to address</button>`;
+    return `<div class="section-title">Ship to</div>
+      <div class="addr">
+        <div class="addr-top"><div class="addr-text">${esc(o.shipTo)}</div>
+          <button onclick="editAddress('${esc(o.orderNo)}')">Edit</button></div>
+        ${mapHidden ? '' : `<div class="map"><iframe id="mapFrame" data-addr="${esc(o.shipTo)}"
+          src="${esc(myPos && Date.now() - myPos.t < POS_MAX_AGE ? mapRouteUrl(myPos, o.shipTo) : mapEmbedUrl(o.shipTo))}" referrerpolicy="no-referrer-when-downgrade"
+          title="Map to ${esc(o.shipTo.replace(/\n+/g, ', '))}" allowfullscreen></iframe></div>
+          <div class="map-status" id="mapStatus">${myPos && Date.now() - myPos.t < POS_MAX_AGE ? '🧭 Route from your current location' : '📍 Finding your location for directions…'}</div>`}
+        <button class="map-toggle" onclick="toggleMap('${esc(o.orderNo)}')" aria-pressed="${!mapHidden}">${mapHidden ? '🗺 Show map' : 'Hide map'}</button>
+        <div class="addr-links">
+          <a href="${esc(mapOpenUrl(o.shipTo))}" target="_blank" rel="noopener">🗺 Open in Google Maps ↗</a>
+          <a href="${esc(mapDirectionsUrl(o.shipTo))}" target="_blank" rel="noopener">🧭 Directions ↗</a>
+        </div>
+      </div>`;
+  }
+  function editAddress(no) {
+    if (viewOnly()) return;
+    const o = orderByNo(no);
+    $('addrBox').innerHTML = `<div class="section-title">Ship to</div>
+      <textarea class="field" id="addrInput" rows="3" maxlength="300" placeholder="Street, City, State ZIP" autocomplete="street-address">${esc(o.shipTo || '')}</textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button class="btn primary" id="addrSave" style="flex:1" onclick="saveAddress('${esc(no)}')">Save address</button>
+        <button class="btn ghost" onclick="$('addrBox').innerHTML = addressHtml(orderByNo('${esc(no)}'))">Cancel</button>
+      </div>
+      ${o.shipTo ? `<button style="background:none;border:0;color:var(--danger);font-weight:600;padding:8px 0" onclick="$('addrInput').value='';saveAddress('${esc(no)}')">Remove address</button>` : ''}`;
+    setTimeout(() => $('addrInput') && $('addrInput').focus(), 50);
+  }
+  async function saveAddress(no) {
+    if (viewOnly()) return;
+    const v = $('addrInput').value.trim();
+    $('addrSave').disabled = true;
+    try {
+      const saved = await api('setOrderAddress', no, v);
+      const i = orders.findIndex(o => o.orderNo === no);
+      if (i >= 0) orders[i] = Object.assign(orders[i], saved);
+      if ($('sheet').dataset.order === no && $('addrBox')) $('addrBox').innerHTML = addressHtml(orders[i]);
+      render(); toast(v ? 'Address saved' : 'Address removed');
+    } catch (e) { if ($('addrSave')) $('addrSave').disabled = false; fail(e); }
+  }
   function cleanUrl(v) {
     v = String(v || '').trim();
     if (!v) return '';
@@ -1077,13 +1251,14 @@
   function renderLog() {
     const usersBtn = canManageUsers() ? `<button class="users-btn" onclick="openUsers()"><span>👥 Users &amp; permissions<br><small>${isAdmin() ? 'Add people and choose who can edit' : 'The people you added: add, change or remove them'}</small></span><span>›</span></button>` : '';
     const versionNote = `<div class="muted-note" style="text-align:center;font-size:12px">App version ${esc(APP_VERSION)}</div>`;
+    const countBtn = cgAccess() ? `<button class="users-btn" onclick="openCountGrid()"><span>🧮 Count sheet<br><small>Starting Qty and Available Today for every row · ${isOwnerMe() ? 'you choose which admins can view or edit' : cgCanEdit() ? 'you can view and edit' : 'view only'}</small></span><span>›</span></button>` : '';
     const adjBtn = !canSee('stock') ? '' : ['rcvpo', 'rcvret', 'scanadj', 'adjs'].map(id => { const [, ic, title, note] = PIN_TOOLS.find(t => t[0] === id), on = pinned({ t: 'tool', ref: id }) >= 0;
       return `<span class="otool-w ut-w"><button class="users-btn${id === 'adjs' ? '' : ' rcv-btn'}" onclick="openTool('${id}')"><span>${ic} ${title}<br><small>${note}</small></span><span>›</span></button><button
         class="otool-pin ${on ? 'on' : ''}" onclick="togglePin(${esc(JSON.stringify({ t: 'tool', ref: id, label: title, ic }))})" aria-pressed="${on}" aria-label="${on ? 'Unpin' : 'Pin'} ${title}"
         title="${on ? 'Unpin' : 'Pin to the top bar'}">📌</button></span>`; }).join('');
     const adjWrapped = adjBtn ? toolsWrap('activity', adjBtn, ['rcvpo', 'rcvret', 'scanadj', 'adjs'].map(id => PIN_TOOLS.find(t => t[0] === id)[1])) : '';
-    if (!logEntries.length) { $('main').innerHTML = themePickerHtml() + usersBtn + adjWrapped + '<div class="empty">No activity from the app yet.</div>' + versionNote; return; }
-    $('main').innerHTML = themePickerHtml() + usersBtn + adjWrapped +
+    if (!logEntries.length) { $('main').innerHTML = themePickerHtml() + usersBtn + countBtn + adjWrapped + '<div class="empty">No activity from the app yet.</div>' + versionNote; return; }
+    $('main').innerHTML = themePickerHtml() + usersBtn + countBtn + adjWrapped +
       `<div class="muted-note list-range">${logEntries.length} recent change${logEntries.length === 1 ? '' : 's'} ${dateRangeHtml(logEntries.map(l => l.timestamp))}</div>` + logEntries.map(l => {
       const cls = l.change > 0 ? 'pos' : l.change < 0 ? 'neg' : '';
       const chg = l.change > 0 ? '+' + l.change : l.change || '';
@@ -1154,7 +1329,12 @@
     ['instant', '⚡', 'Instant', 'No animation: there right away, and gone right away'],
     ['thunder', '⛈', 'Thunder strike', 'Lightning cracks down and the panel slams in with a flash, like Supplybot’s entrance'],
     ['bot', '🤖', 'Out of Supplybot’s bolt', 'The lightning bolt on Supplybot’s chest flashes and the panel bursts out of it'],
-    ['spark', '⚡', 'EnviroSpark power-up', 'The EnviroSpark logo charges up letter by letter, the O’s bolt spins, sparks fly and the panel is revealed out of it']];
+    ['spark', '⚡', 'EnviroSpark power-up', 'The EnviroSpark logo charges up letter by letter, the O’s bolt spins, sparks fly and the panel is revealed out of it'],
+    ['pinpop', '📌', 'Out of the pin', 'The pin you tapped jumps, a ripple spreads and the panel unfurls straight out of it (from where you tapped, for anything else)'],
+    ['crate', '📦', 'Unboxing', 'A shipping box drops in, its flaps fly open and the panel rises out of it'],
+    ['scan', '▦', 'Barcode scan', 'A red scanner laser sweeps down the screen and the panel appears line by line behind it, with a green ✓ beep'],
+    ['truck', '🚚', 'Special delivery', 'A delivery truck races across the screen and drops the panel off, skidding into place'],
+    ['label', '🧾', 'Label printer', 'The panel feeds out of a label printer at the top, line by line, like a shipping label']];
   const sheetFxKey = () => 'sheetFx:' + String(me && me.email || '').toLowerCase();
   function sheetFx() {
     try { const v = localStorage.getItem(sheetFxKey()); if (SHEET_FX.some(x => x[0] === v)) return v; } catch (e) {  }
@@ -1243,7 +1423,56 @@
     el.addEventListener('animationend', done);
     el._sfxT = setTimeout(done, 1700);
     if (document.documentElement.dataset.sheetfx === 'thunder') thunderStrike(el);
+    const sx = document.documentElement.dataset.sheetfx;
+    if (SB_FX[sx]) { try { SB_FX[sx](el); } catch (e) {  } }
   }
+  let lastPinTap = null;
+  document.addEventListener('pointerdown', e => {
+    const pin = e.target.closest && e.target.closest('.pin-btn, .pfree, .pf-btn, .qf-pin, .tpin, .tagpin-btn, [data-pk], .pins-show');
+    lastPinTap = { x: e.clientX, y: e.clientY, at: Date.now(), r: pin ? pin.getBoundingClientRect() : null };
+  }, true);
+  const fxCalm = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function fxLayer(cls, html, ms) {
+    document.querySelectorAll('.sb-fx.' + cls).forEach(x => x.remove());
+    const w = document.createElement('div'); w.className = 'sb-fx ' + cls; w.setAttribute('aria-hidden', 'true'); w.innerHTML = html;
+    document.body.appendChild(w); setTimeout(() => w.remove(), ms); return w;
+  }
+  const SB_FX = {
+    pinpop(el) {
+      const t = lastPinTap && Date.now() - lastPinTap.at < 2500 ? lastPinTap : null;
+      let x = innerWidth - 40, y = 40, onPin = false;
+      if (t && t.r) { x = t.r.left + t.r.width / 2; y = t.r.top + t.r.height / 2; onPin = true; } else if (t) { x = t.x; y = t.y; }
+      else { const p = [...document.querySelectorAll('.pin-btn, .pfree, .pf-btn')].map(e => e.getBoundingClientRect()).find(r => r.width && r.top >= 0); if (p) { x = p.left + p.width / 2; y = p.top + p.height / 2; onPin = true; } }
+      const r = el.getBoundingClientRect();
+      el.style.setProperty('--sfx-ox', Math.round(x - r.left) + 'px'); el.style.setProperty('--sfx-oy', Math.round(y - r.top) + 'px');
+      if (fxCalm()) return;
+      fxLayer('fx-pin', `<i class="pp-ring" style="left:${x}px;top:${y}px"></i><i class="pp-ring r2" style="left:${x}px;top:${y}px"></i>${onPin ? `<b class="pp-pin" style="left:${x}px;top:${y}px">📌</b>` : ''}
+        ${Array.from({ length: 10 }, (_, i) => `<s class="pp-dot" style="left:${x}px;top:${y}px;--a:${i * 36}deg;--d:${40 + (i % 3) * 16}px"></s>`).join('')}`, 900);
+    },
+    crate(el) {
+      if (fxCalm()) return;
+      const bx = innerWidth / 2, by = innerHeight - 118;
+      fxLayer('fx-crate', `<div class="cr-box" style="left:${bx}px;top:${by}px"><i class="cr-fl l"></i><i class="cr-fl r"></i><i class="cr-body"><u></u><em>SUPPLYBOT</em></i></div>
+        ${Array.from({ length: 8 }, (_, i) => `<s class="cr-puff" style="left:${bx}px;top:${by}px;--a:${-160 + i * 20}deg"></s>`).join('')}`, 1100);
+    },
+    scan(el) {
+      if (fxCalm()) return;
+      const r = el.getBoundingClientRect();
+      fxLayer('fx-scan', `<div class="sc-beam" style="left:${r.left}px;width:${r.width}px;top:${r.top}px;--h:${Math.max(0, Math.min(innerHeight, r.bottom) - r.top)}px"><i></i></div>
+        <div class="sc-ok" style="left:${r.left + r.width / 2}px;top:${r.top + 60}px">✓ BEEP</div>`, 1150);
+    },
+    truck(el) {
+      if (fxCalm()) return;
+      const r = el.getBoundingClientRect(), y = Math.min(innerHeight - 60, r.top + 70);
+      fxLayer('fx-truck', `<div class="tk-run" style="top:${y}px"><b class="tk">🚚</b>${Array.from({ length: 6 }, (_, i) => `<s class="tk-dust" style="--i:${i}"></s>`).join('')}</div>
+        <i class="tk-lines" style="top:${y - 16}px"></i>`, 1000);
+    },
+    label(el) {
+      if (fxCalm()) return;
+      const r = el.getBoundingClientRect();
+      fxLayer('fx-label', `<div class="lb-printer" style="left:${r.left + 8}px;width:${r.width - 16}px;top:${Math.max(0, r.top - 30)}px"><i class="lb-led"></i><span>SUPPLYBOT · PRINTING</span><u></u></div>`, 1250);
+    },
+  };
   function botBoltLaunch(el) {
     try {
       const vis = e => { if (!e) return null; const r = e.getBoundingClientRect(); return r.width && r.height && r.bottom > 0 && r.top < innerHeight ? r : null; };
@@ -1655,6 +1884,70 @@
     if (panel === 'profile') renderProfile(); else if (panel === 'mycomments') renderMyCommentsPanel(); else return;
     $('sheet').scrollTop = top;
   }
+  let myActFilter = 'all', myActMore = 0;
+  function myIdentity() {
+    const em = String(me && me.email || '').toLowerCase(), names = new Set([norm(personName(em))]);
+    if (me && me.name) names.add(norm(me.name));
+    (contacts || []).forEach(c => { if (String(c.email || '').toLowerCase() === em && c.name) names.add(norm(c.name)); });
+    names.delete('');
+    return { em, names };
+  }
+  function isMe(v, id) {
+    const t = String(v || '').trim(); if (!t) return false;
+    if (t.toLowerCase() === id.em || t.toLowerCase().includes(id.em)) return true;
+    return t.split(/\s*(?:[,;/&|+]|\band\b)\s*/i).some(p => id.names.has(norm(p)));
+  }
+  const MYACT_ROLES = { created: ['✍️', 'Created'], shipped: ['🚚', 'Shipped'], cancelled: ['✕', 'Cancelled'], pm: ['🧑‍💼', 'PM'], contact: ['👤', 'Contact'],
+    received: ['📥', 'Received'], project: ['🏗', 'Project'], card: ['📇', 'My card'] };
+  function myActList() {
+    const id = myIdentity(), out = [];
+    if (!id.em) return out;
+    (orders || []).forEach(o => {
+      const roles = [isMe(o.createdBy, id) && 'created', isMe(o.shippedBy, id) && 'shipped', isMe(o.cancelledBy, id) && 'cancelled', isMe(o.pm, id) && 'pm', isMe(o.contact, id) && 'contact'].filter(Boolean);
+      if (roles.length) out.push({ kind: 'order', icon: '🚚', title: o.orderNo + (o.projectName ? ' · ' + o.projectName : ''), sub: o.status + (o.lines ? ' · ' + o.lines.length + ' item' + (o.lines.length === 1 ? '' : 's') : ''),
+        at: o.shipped || o.cancelled || o.created || o.orderDate || '', roles, go: `closeSheet(); openOrder(${JSON.stringify(o.orderNo)})` });
+    });
+    ['po', 'return'].forEach(k => (searchRcpts[k] || []).forEach(r => {
+      const roles = [isMe(r.user, id) && 'received', isMe(r.pm, id) && 'pm', isMe(r.contact, id) && 'contact'].filter(Boolean);
+      if (!roles.length) return;
+      const q = k === 'po' ? r.po || r.vendor : r.orderNo || r.from, units = (r.lines || []).reduce((n, l) => n + l.qty, 0);
+      out.push({ kind: k, icon: k === 'po' ? '📥' : '↩️', title: k === 'po' ? 'PO ' + (r.po || '—') + (r.vendor ? ' · ' + r.vendor : '') : 'Return' + (r.from ? ' from ' + r.from : '') + (r.orderNo ? ' · ' + r.orderNo : ''),
+        sub: units + ' unit' + (units === 1 ? '' : 's') + ((r.links || []).length + (r.pdfs || []).length ? ' · 📎 ' + ((r.links || []).length + (r.pdfs || []).length) : ''), at: r.timestamp, roles,
+        go: `closeSheet(); openReceiptsFor(${JSON.stringify(k)}, ${JSON.stringify(q || '')})` });
+    }));
+    (contacts || []).forEach(c => {
+      if (c.type === 'Project') { const d = c.defaults || {}, roles = [isMe(d.pm, id) && 'pm', isMe(d.contact, id) && 'contact'].filter(Boolean);
+        if (roles.length) out.push({ kind: 'project', icon: '🏗', title: c.name || c.company, sub: 'Project' + (c.projectNo ? ' #' + c.projectNo : ''), at: '', roles: ['project'].concat(roles), go: `closeSheet(); openProjectCard(${JSON.stringify(c.name || c.company)})` });
+        return; }
+      if (String(c.email || '').toLowerCase() === id.em) out.push({ kind: 'contact', icon: '📇', title: contactLabel(c), sub: [c.type, c.company].filter(Boolean).join(' · '), at: '', roles: ['card'], go: `closeSheet(); openContactCard(${JSON.stringify(c.id)})` });
+    });
+    return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  }
+  function myActHtml() {
+    const loading = (!ordersLoaded && canSee('orders')) || (canSee('stock') && !searchRcpts.po);
+    if (loading) { setTimeout(myActLoad, 0); }
+    const all = myActList(), kinds = [['all', 'All'], ['order', '🚚 Orders'], ['po', '📥 POs'], ['return', '↩️ Returns'], ['project', '🏗 Projects']].filter(([k]) => k === 'all' || all.some(x => x.kind === k));
+    const list = myActFilter === 'all' ? all : all.filter(x => x.kind === myActFilter), shown = list.slice(0, 25 + myActMore);
+    const count = r => all.filter(x => x.roles.includes(r)).length;
+    const roleChips = Object.keys(MYACT_ROLES).filter(r => count(r)).map(r => `<span class="ma-stat">${MYACT_ROLES[r][0]} ${MYACT_ROLES[r][1]} <b>${count(r)}</b></span>`).join('');
+    if (!all.length) return loading ? '<div class="muted-note">Looking for your name in orders, POs and returns…</div>' : `<div class="empty">Nothing with your name on it yet. When you create or ship an order, receive a PO, or someone sets you as a PM or contact, it shows here.</div>`;
+    return `<div class="muted-note" style="padding:0 0 6px">Everything with <b>${esc([...myIdentity().names].map(n => n.replace(/\b\w/g, c => c.toUpperCase())).join(' / ') || me.email)}</b> on it. Tap one to open it.${loading ? ' <i>Still loading…</i>' : ''}</div>
+      <div class="ma-stats">${roleChips}</div>
+      ${kinds.length > 2 ? `<div class="mc-seg ma-seg">${kinds.map(([k, l]) => `<button class="${myActFilter === k ? 'on' : ''}" onclick="myActFilter = '${k}'; myActMore = 0; myActRedraw()">${l}${k === 'all' ? '' : ` (${all.filter(x => x.kind === k).length})`}</button>`).join('')}</div>` : ''}
+      <div class="ma-list">${shown.map(x => `<button class="ma-row" onclick="${esc(x.go)}"><span class="ma-ic">${x.icon}</span><span class="ma-b"><b>${esc(x.title)}</b><small>${esc(x.sub)}${x.at ? ' · ' + esc(when(x.at)) : ''}</small>
+        <span class="ma-roles">${x.roles.map(r => `<i class="ma-r r-${r}">${MYACT_ROLES[r][0]} ${MYACT_ROLES[r][1]}</i>`).join('')}</span></span><span class="ma-go" aria-hidden="true">›</span></button>`).join('')}</div>
+      ${list.length > shown.length ? `<button class="btn ghost" style="width:100%;margin-top:6px" onclick="myActMore += 25; myActRedraw()">Show more (${list.length - shown.length})</button>` : ''}`;
+  }
+  function myActRedraw() { const b = $('myActBox'); if (b) b.innerHTML = myActHtml(); }
+  let myActBusy = false, myActTried = 0;
+  function myActLoad() {
+    if (myActBusy || Date.now() - myActTried < 30000) return; myActBusy = true; myActTried = Date.now();
+    const jobs = [];
+    if (!ordersLoaded && canSee('orders')) jobs.push(loadOrders());
+    if (!contactsLoaded && canSee('contacts')) jobs.push(loadContacts().catch(() => {}));
+    if (canSee('stock') && !searchRcpts.po) jobs.push(Promise.all(['return', 'po'].map(k => quietApi('getReceipts', k).then(l => { searchRcpts[k] = Array.isArray(l) ? l : []; }).catch(() => { searchRcpts[k] = []; }))).then(() => { searchRcpts.at = Date.now(); }));
+    Promise.all(jobs).finally(() => { myActBusy = false; myActRedraw(); });
+  }
   const profOpen = new Set();
   function profAcc(k) {
     profOpen.has(k) ? profOpen.delete(k) : profOpen.add(k);
@@ -1680,6 +1973,7 @@
           aria-pressed="${cur === id}"><span class="pv">${id === 'grid' || id === 'gridcover' ? '<i><b></b><s></s></i><i><b></b><s></s></i>' : '<i><b></b><s></s><s></s></i><i><b></b><s></s><s></s></i>'}</span>${label}</button>`).join('')}</div>
         <div class="muted-note" style="margin-bottom:10px">${note} Also changed with 🖼 above the list. Saved to your profile.</div>`;
     const profileBlocks = {
+      myact: `<div class="section-title" style="text-align:left">🔗 My activity</div><div id="myActBox">${myActHtml()}</div>`,
       comments: `<div class="section-title" style="text-align:left;display:flex;align-items:center;justify-content:space-between">
           <span>💬 My comments</span>
           <button class="mc-toggle" onclick="toggleMyComments()">${myCommentsShown() ? 'Hide' : 'Show'}</button></div>
@@ -1708,7 +2002,9 @@
           `<button class="${comicStyle() === id ? 'on' : ''}" onclick="setComicStyle('${id}')" aria-pressed="${comicStyle() === id}">${ic}<small>${label}</small></button>`).join('')}</span></div>
         <div class="emo-row" style="margin:4px 0 10px"><span class="emo-l">Emoji pins</span><span class="emo-opts">${[[false, '✨ Animated'], [true, '⏸ Still']].map(([v, label]) =>
           `<button class="${pinEmoStill() === v ? 'on' : ''}" onclick="setPinEmoStill(${v})" aria-pressed="${pinEmoStill() === v}">${label}</button>`).join('')}</span></div>
+        <button class="gm-tog qf-prof ${pinCapsOn() ? 'on' : ''}" role="switch" aria-checked="${pinCapsOn()}" onclick="setPinCaps(!pinCapsOn())"><span>🏷</span><span><b>Pin captions</b><small>A small name and the key fact under every pin: stock, order status and ship date, phone, timer…</small></span><i aria-hidden="true"></i></button>
         <button class="gm-tog qf-prof ${qfabOn() ? 'on' : ''}" role="switch" aria-checked="${qfabOn()}" onclick="setQfab(!qfabOn()); this.classList.toggle('on', qfabOn()); this.setAttribute('aria-checked', qfabOn())"><span>＋</span><span><b>Quick-create button</b><small>New order, note or item (and any pins you keep in it) from any screen</small></span><i aria-hidden="true"></i></button>
+        ${[['items', '📍', 'Location filter row', 'The location chips on Items and In Stock'], ['orders', '🚚', 'Status filter row', 'All / Drafts / Shipped / Cancelled on Orders']].map(([k, ic, t, sub]) => `<button class="gm-tog qf-prof ${chipsOff(k) ? '' : 'on'}" role="switch" aria-checked="${!chipsOff(k)}" onclick="setChipsOff(!chipsOff('${k}'), '${k}'); this.classList.toggle('on', !chipsOff('${k}')); this.setAttribute('aria-checked', !chipsOff('${k}'))"><span>${ic}</span><span><b>${t}</b><small>${sub}</small></span><i aria-hidden="true"></i></button>`).join('')}
         ${pinsWhere() === 'bar' ? '' : pinLookHtml()}
         <div id="pinMgr">${pinMgrHtml()}</div>
         <div class="pm-addlink"><input class="field" id="pmLinkIc" maxlength="4" placeholder="🔗" aria-label="Emoji for the pin (optional)">
@@ -3126,6 +3422,167 @@
       toast('Profile photo removed');
     } catch (e) { fail(e); }
   }
+  const isOwnerMe = () => !!(me && me.isOwner);
+  const cgAccess = () => me ? (me.isOwner ? 'owner' : me.countSheet || '') : '';
+  const cgCanEdit = () => cgAccess() === 'owner' || cgAccess() === 'edit';
+  let cg = null;
+  async function openCountGrid() {
+    if (!cgAccess()) return toast('The count sheet is only for the app owner and the admins they choose.', true);
+    openSheet('<h2>🧮 Count sheet</h2><div class="loading">Reading the sheet…</div>'); $('sheet').dataset.panel = 'countgrid';
+    try { const r = await api('getCountGrid'); if ($('sheet').dataset.panel !== 'countgrid') return; cg = Object.assign(r, { edits: {}, sel: new Set(), lbl: '', newOpen: false, q: (cg && cg.q) || '', show: (cg && cg.show) || 'all', more: 0 }); renderCountGrid(); }
+    catch (e) { closeSheet(); fail(e); }
+  }
+  const cgVal = (r, k) => { const e = cg.edits[r.row]; return e && k in e ? e[k] : r[k]; };
+  const cgColor = r => { const e = cg.edits[r.row]; return e && 'color' in e ? e.color : r.qtyColor || ''; };
+  const cgN = () => Object.values(cg.edits).reduce((n, e) => n + Object.keys(e).length, 0);
+  function cgRows() {
+    const q = norm(cg.q);
+    return cg.rows.filter(r => (!q || norm([r.name, r.partNumber, r.location, r.shelf, r.job].join(' ')).includes(q))
+      && (cg.show === 'all' || (cg.show === 'green' && isGreen(cgColor(r))) || (cg.show.startsWith('c:') && cgColor(r) === cg.show.slice(2)) || (cg.show === 'diff' && String(cgVal(r, 'left')) !== String(cgVal(r, 'avail')))
+        || (cg.show === 'edited' && cg.edits[r.row]) || (cg.show === 'blank' && cgVal(r, 'left') === '')));
+  }
+  function renderCountGrid(keepScroll) {
+    const sh = $('sheet'), top = sh.scrollTop, list = cgRows(), shown = list.slice(0, 120 + cg.more), n = cgN();
+    const cnt = k => cg.rows.filter(r => k === 'green' ? isGreen(cgColor(r)) : k === 'diff' ? String(cgVal(r, 'left')) !== String(cgVal(r, 'avail')) : k === 'edited' ? cg.edits[r.row] : cgVal(r, 'left') === '').length;
+    const chip = (k, l) => `<button class="chip ${cg.show === k ? 'active' : ''}" onclick="cg.show='${k}'; cg.more=0; renderCountGrid()">${l}${k === 'all' ? '' : ' · ' + cnt(k)}</button>`;
+    sh.innerHTML = `<div class="grab"></div><h2 style="margin-bottom:2px">🧮 Count sheet</h2>
+      <div class="muted-note" style="padding:0 0 8px">Every row of the master sheet: <b>${esc(cg.leftTitle)}</b> and <b>${esc(cg.availTitle)}</b>. ${cgCanEdit() ? 'Edit any number, then 💾 Save.' : '<b>👁 View only</b>: ask the app owner for edit access.'}</div>
+      ${isOwnerMe() ? `<button class="attach-btn cg-who" onclick="openCountAccess()">👥 Who can use this <small>pick admins who can view or edit</small></button>` : ''}
+      <input class="field" type="search" placeholder="Search name, part #, location, job…" value="${esc(cg.q)}" oninput="cg.q=this.value; cg.more=0; cgRedrawList()" style="margin-bottom:8px">
+      <div id="cgLabels">${cgLabelsHtml()}</div>
+      <div class="chips cg-chips">${chip('all', 'All · ' + cg.rows.length)}${chip('green', '🟩 Green')}${chip('diff', '≠ Different')}${chip('blank', '◻ Blank start')}${chip('edited', '✎ Edited')}</div>
+      <div class="cg-head"><span>Item</span><span title="${esc(cg.leftTitle)}">${esc(cg.leftTitle)}</span><span>${esc(cg.availTitle)}</span></div>
+      <div id="cgList">${cgListHtml(list, shown)}</div>
+      <div class="sticky-foot">${cgCanEdit() ? `
+        <button class="btn ghost" onclick="${n ? 'cgDiscard()' : 'closeSheet()'}">${n ? '↺ Undo all' : 'Close'}</button>
+        <button class="btn primary" id="cgSave" onclick="cgSave()" ${n ? '' : 'disabled'}>💾 Save${n ? ' ' + n + ' change' + (n === 1 ? '' : 's') : ''}</button>`
+        : '<button class="btn ghost" style="flex:1" onclick="closeSheet()">Close</button>'}
+      </div>`;
+    sh.dataset.panel = 'countgrid';
+    if (keepScroll) sh.scrollTop = top;
+  }
+  function cgListHtml(list, shown) {
+    if (!list.length) return '<div class="empty">No rows match.</div>';
+    return shown.map(r => { const col = cgColor(r), ced = cg.edits[r.row] && 'color' in cg.edits[r.row];
+      return `<div class="cg-row ${cg.edits[r.row] ? 'ed' : ''} ${cg.sel.has(r.row) ? 'sel' : ''}" style="--qc:${col || 'transparent'}">
+        <div class="cg-name">${cgCanEdit() ? `<label class="cg-ck"><input type="checkbox" ${cg.sel.has(r.row) ? 'checked' : ''} onchange="cgSelect(${r.row}, this.checked)" aria-label="Select ${esc(r.name)}"></label>` : ''}<b>${esc(r.name)}</b><small>${esc([r.partNumber, [r.location, r.shelf].filter(Boolean).join(' · '), 'row ' + r.row].filter(Boolean).join(' · '))}</small>
+          <span class="cg-lbl ${ced ? 'ed' : ''}">${col ? `<i style="background:${col}"></i>${esc(labelOf(col))}` : '<i class="none"></i>No label'}${ced ? ` <s>was ${esc(r.qtyColor ? labelOf(r.qtyColor) : 'no label')}</s>` : ''}</span></div>
+        ${['left', 'avail'].map(k => { const v = cgVal(r, k), ed = cg.edits[r.row] && k in cg.edits[r.row];
+          return `<label class="cg-cell ${ed ? 'ed' : ''}" ${k === 'avail' && r.qtyColor ? `style="background:${r.qtyColor}22"` : ''}><input type="number" min="0" step="1" inputmode="numeric" class="field" value="${esc(v)}" data-row="${r.row}" data-k="${k}" ${cgCanEdit() ? '' : 'readonly'}
+            oninput="cgEdit(${r.row}, '${k}', this.value, this)" onkeydown="cgKey(event, this)" aria-label="${esc((k === 'left' ? cg.leftTitle : cg.availTitle) + ' for ' + r.name)}"><small ${ed ? '' : 'hidden'}>was ${esc(r[k] === '' ? 'blank' : r[k])}</small></label>`; }).join('')}
+      </div>`; }).join('') + (list.length > shown.length ? `<button class="btn ghost" style="width:100%;margin-top:6px" onclick="cg.more += 200; cgRedrawList()">Show more (${list.length - shown.length})</button>` : '');
+  }
+  function cgRedrawList() { const list = cgRows(); $('cgList').innerHTML = cgListHtml(list, list.slice(0, 120 + cg.more)); }
+  function cgEdit(row, k, v, el) {
+    const r = cg.rows.find(x => x.row === row); if (!r || !cgCanEdit()) return;
+    const val = v === '' ? '' : Number(v), e = cg.edits[row] || {};
+    if (String(val) === String(r[k])) delete e[k]; else e[k] = val;
+    if (Object.keys(e).length) cg.edits[row] = e; else delete cg.edits[row];
+    const lab = el.closest('.cg-cell'), ed = k in e; lab.classList.toggle('ed', ed); lab.querySelector('small').hidden = !ed;
+    el.closest('.cg-row').classList.toggle('ed', !!cg.edits[row]);
+    const n = cgN(), b = $('cgSave'); b.disabled = !n; b.textContent = '💾 Save' + (n ? ' ' + n + ' change' + (n === 1 ? '' : 's') : '');
+    const u = $('sheet').querySelector('.sticky-foot .btn.ghost'); if (u) { u.textContent = n ? '↺ Undo all' : 'Close'; u.onclick = n ? cgDiscard : closeSheet; }
+  }
+  function cgKey(e, el) {
+    if (!['Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+    const all = [...document.querySelectorAll(`#cgList input[data-k="${el.dataset.k}"]`)], i = all.indexOf(el), nx = all[i + (e.key === 'ArrowUp' ? -1 : 1)];
+    if (nx) { e.preventDefault(); nx.focus(); nx.select(); nx.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  }
+  async function openCountAccess() {
+    if (!isOwnerMe()) return;
+    const back = !!cg;
+    openSheet('<h2>👥 Count sheet access</h2><div class="loading">Loading admins…</div>'); $('sheet').dataset.panel = 'countaccess';
+    try { cgAdmins = await api('getCountAccess'); renderCountAccess(back); } catch (e) { fail(e); if (back) openCountGrid(); }
+  }
+  let cgAdmins = [];
+  function renderCountAccess(back) {
+    const lv = [['', '🚫 No access'], ['view', '👁 View'], ['edit', '✏️ View & edit']];
+    $('sheet').innerHTML = `<div class="grab"></div><h2 style="margin-bottom:4px">👥 Count sheet access</h2>
+      <div class="muted-note" style="padding:0 0 10px">You always have full access. Pick which admins can use the 🧮 Count sheet too: <b>View</b> to look only, or <b>View &amp; edit</b> to change numbers. Only admins can be picked; someone who stops being an admin loses it.</div>
+      ${cgAdmins.length ? cgAdmins.map(a => `<div class="cga-row"><div class="who"><b>${esc(personName(a.email))}</b><small>${esc([a.email, a.note].filter(Boolean).join(' · '))}</small></div>
+        <div class="mc-seg cga-seg">${lv.map(([k, l]) => `<button class="${a.access === k ? 'on' : ''}" aria-pressed="${a.access === k}" onclick="setCountAccessUi(${esc(JSON.stringify(a.email))}, '${k}')">${l}</button>`).join('')}</div></div>`).join('')
+        : '<div class="empty">There are no other admins yet. Make someone an admin under 👥 Users &amp; permissions first.</div>'}
+      <div class="actions"><button class="btn ghost" onclick="${back ? 'openCountGrid()' : 'closeSheet()'}">${back ? '‹ Back to the count sheet' : 'Close'}</button></div>`;
+    $('sheet').dataset.panel = 'countaccess'; $('sheet').dataset.back = back ? '1' : '';
+  }
+  async function setCountAccessUi(email, level) {
+    try { cgAdmins = await api('setCountAccess', email, level); renderCountAccess($('sheet').dataset.back === '1');
+      toast(personName(email) + (level === 'edit' ? ' can view and edit the count sheet' : level === 'view' ? ' can view the count sheet' : ' has no count sheet access')); } catch (e) { fail(e); }
+  }
+  function cgDiscard() { if (!confirm('Undo all ' + cgN() + ' changes?')) return; cg.edits = {}; cg.sel.clear(); renderCountGrid(true); }
+  function cgPalette() {
+    const n = {}; cg.rows.forEach(r => { const c = cgColor(r); if (c) n[c] = (n[c] || 0) + 1; });
+    const cols = [...new Set(Object.keys(n).sort((a, b) => n[b] - n[a]).concat(Object.keys(colorLabels || {}), cg.extra || []))].filter(c => /^#[0-9a-f]{6}$/i.test(c));
+    return cols.map(c => ({ c, n: n[c] || 0 }));
+  }
+  function cgLabelsHtml() {
+    const pal = cgPalette(), sel = cg.sel.size, ed = cgCanEdit(), none = cg.rows.filter(r => !cgColor(r)).length;
+    const hint = sel ? `<b>${sel} selected</b> · tap a label to put it on ${sel === 1 ? 'it' : 'them'} <button class="cg-x" onclick="cgSelAll(false)">Clear</button>`
+      : `🏷 Labels · ${ed ? 'tick items to label them, or tap one to see its items' : 'tap one to see its items'}${ed ? ' <button class="cg-x" onclick="cgSelAll(true)">Select all shown</button>' : ''}`;
+    const chips = pal.map(({ c, n }) => `<span class="cg-lchip ${cg.show === 'c:' + c ? 'on' : ''}"><button onclick="cgLabelTap('${c}')"><i style="background:${c}"></i>${esc(labelOf(c))} <small>${n}</small></button>${ed ? `<button class="cg-led" onclick="cgLabelMenu('${c}')" aria-label="Edit ${esc(labelOf(c))}">✎</button>` : ''}</span>`).join('')
+      + (sel ? `<span class="cg-lchip rm"><button onclick="cgApplyColor('')">⌫ Remove label</button></span>` : `<span class="cg-lchip ${cg.show === 'c:' ? 'on' : ''}"><button onclick="cgLabelTap('')"><i class="none"></i>No label <small>${none}</small></button></span>`)
+      + (ed ? `<span class="cg-lchip new"><button onclick="cg.newOpen = !cg.newOpen; cg.lbl = ''; cgLabelsRedraw()">＋ New label</button></span>` : '');
+    let form = '';
+    if (ed && cg.newOpen) form = `<div class="cg-lform"><input type="color" id="cgNewC" value="#7c3aed" aria-label="Colour"><input class="field" id="cgNewN" maxlength="40" placeholder="Label name, e.g. Staged for install">
+        <button class="btn primary" onclick="cgNewLabel()">Create${sel ? ' & apply' : ''}</button></div>`;
+    else if (ed && cg.lbl) { const c = cg.lbl, n = cg.rows.filter(r => cgColor(r) === c).length;
+      form = `<div class="cg-lform"><i class="cg-sw" style="background:${c}"></i><input class="field" id="cgRenN" maxlength="40" value="${esc(colorLabels[c] || '')}" placeholder="${esc(colorName(c))}"><button class="btn ghost" onclick="cgRename('${c}')">Rename</button>
+        <div class="cg-lacts"><button class="btn ghost" onclick="cgSelColor('${c}')" ${n ? '' : 'disabled'}>☑ Select its ${n}</button><button class="btn ghost danger" onclick="cgClearColor('${c}')" ${n ? '' : 'disabled'}>⌫ Remove from all ${n}</button><button class="btn ghost" onclick="cg.lbl=''; cgLabelsRedraw()">Done</button></div></div>`; }
+    return `<div class="cg-lbar ${sel ? 'picking' : ''}"><div class="cg-lhint">${hint}</div><div class="cg-lchips">${chips}</div>${form}</div>`;
+  }
+  function cgLabelsRedraw() { const b = $('cgLabels'); if (b) b.innerHTML = cgLabelsHtml(); }
+  function cgRefresh() { renderCountGrid(true); }
+  function cgSelect(row, on) { on ? cg.sel.add(row) : cg.sel.delete(row); cgLabelsRedraw(); const el = document.querySelector(`#cgList input[data-row="${row}"]`); if (el) el.closest('.cg-row').classList.toggle('sel', on); }
+  function cgSelAll(on) { if (on) cgRows().slice(0, 120 + cg.more).forEach(r => cg.sel.add(r.row)); else cg.sel.clear(); cgRefresh(); }
+  function cgSetColor(r, c) {
+    const e = cg.edits[r.row] || {};
+    if ((c || '') === (r.qtyColor || '')) delete e.color; else e.color = c || '';
+    if (Object.keys(e).length) cg.edits[r.row] = e; else delete cg.edits[r.row];
+  }
+  function cgApplyColor(c) {
+    const rows = cg.rows.filter(r => cg.sel.has(r.row)); if (!rows.length) return;
+    rows.forEach(r => cgSetColor(r, c)); cg.sel.clear(); cgRefresh();
+    toast(`🏷 ${c ? labelOf(c) : 'No label'} on ${rows.length} item${rows.length === 1 ? '' : 's'} · 💾 Save to keep it`);
+  }
+  function cgLabelTap(c) {
+    if (cg.sel.size && cgCanEdit()) return cgApplyColor(c);
+    cg.show = cg.show === 'c:' + c ? 'all' : 'c:' + c; cg.more = 0; renderCountGrid(true);
+  }
+  function cgLabelMenu(c) { cg.lbl = cg.lbl === c ? '' : c; cg.newOpen = false; cgLabelsRedraw(); }
+  function cgSelColor(c) { cg.sel = new Set(cg.rows.filter(r => cgColor(r) === c).map(r => r.row)); cg.lbl = ''; cg.show = 'c:' + c; renderCountGrid(true); }
+  function cgClearColor(c) {
+    const rows = cg.rows.filter(r => cgColor(r) === c);
+    if (!rows.length || !confirm(`Take ${labelOf(c)} off all ${rows.length} item${rows.length === 1 ? '' : 's'}? Their Available Today cell goes back to no colour when you 💾 Save.`)) return;
+    rows.forEach(r => cgSetColor(r, '')); cg.lbl = ''; cgRefresh(); toast(`⌫ ${labelOf(c)} comes off ${rows.length} item${rows.length === 1 ? '' : 's'} · 💾 Save to keep it`);
+  }
+  async function cgRename(c) {
+    const name = ($('cgRenN').value || '').trim();
+    try { applyColorLabels(await api('setColorLabels', { [c]: name }, {}, {})); cgLabelsRedraw(); cgRedrawList(); toast(name ? '🏷 Renamed to ' + name : 'Name taken off (shows as ' + colorName(c) + ')'); } catch (e) { fail(e); }
+  }
+  async function cgNewLabel() {
+    const c = String(($('cgNewC') || {}).value || '').toLowerCase(), name = ($('cgNewN').value || '').trim();
+    if (!/^#[0-9a-f]{6}$/.test(c) || c === '#ffffff') return toast('Pick a colour (not white)', true);
+    if (!name) return toast('Give the label a name', true);
+    try {
+      applyColorLabels(await api('setColorLabels', { [c]: name }, { [c]: false }, {}));
+      cg.extra = (cg.extra || []).concat(c); cg.newOpen = false;
+      if (cg.sel.size) cgApplyColor(c); else { cgRefresh(); toast('🏷 ' + name + ' made · tick items and tap it to label them'); }
+    } catch (e) { fail(e); }
+  }
+  async function cgSave() {
+    const changes = Object.entries(cg.edits).map(([row, e]) => { const r = cg.rows.find(x => x.row === Number(row)); return Object.assign({ row: Number(row), key: r.key }, e); });
+    const bad = changes.find(c => ['left', 'avail'].some(k => k in c && c[k] !== '' && !(Number.isInteger(c[k]) && c[k] >= 0)) || (c.avail === ''));
+    if (bad) return toast('Counts are whole numbers, 0 or more' + (bad.avail === '' ? ' (Available Today can’t be blank)' : ''), true);
+    if (!confirm(`Save ${cgN()} change${cgN() === 1 ? '' : 's'} to the master sheet?\n\nAvailable Today changes are recorded in each item's Stock history; labels change the colour of the Available Today cell.`)) return;
+    $('cgSave').disabled = true;
+    try {
+      const res = await api('saveCountGrid', changes, cg.leftTitle);
+      res.rows.forEach(u => { const r = cg.rows.find(x => x.key === u.key); if (r) { r.left = u.left; r.avail = u.avail; r.row = u.row; if (u.qtyColor !== undefined) r.qtyColor = u.qtyColor || ''; }
+        const it = items.find(x => x.key === u.key); if (it && u.qtyColor !== undefined) it.qtyColor = u.qtyColor || '';
+        if (it && it.quantity !== u.avail) { it.quantity = u.avail; if (it.cost != null) it.extended = Math.round(it.cost * it.quantity * 100) / 100; delete adjCache[it.key]; } });
+      cg.edits = {}; cg.sel.clear(); renderCountGrid(true); render(); botCelebrate(`Saved ${res.saved} change${res.saved === 1 ? '' : 's'}`);
+    } catch (e) { if ($('cgSave')) $('cgSave').disabled = false; fail(e); }
+  }
   const ROLE_LABELS = { Admin: 'Admin', Manager: 'Manager', Editor: 'Editor', Viewer: 'View only' };
   let usersData = null;
   async function openUsers() {
@@ -3265,6 +3722,17 @@
     document.body.classList.add('sheet-open');
     resumeSoon();
   }
+  let bdDownAt = 0;
+  document.addEventListener('pointerdown', e => { bdDownAt = e.target && e.target.id === 'backdrop' ? Date.now() : 0; }, true);
+  function backdropClose(e) {
+    if (!bdDownAt || Date.now() - bdDownAt > 1500) return;
+    const f = document.activeElement;
+    if (f && $('sheet').contains(f) && /^(INPUT|TEXTAREA|SELECT)$/.test(f.tagName)) { f.blur(); return; }
+    if (Date.now() - fieldTouchAt < 600) return;
+    closeSheet();
+  }
+  let fieldTouchAt = 0;
+  document.addEventListener('focusout', e => { if (e.target && $('sheet') && $('sheet').contains(e.target)) fieldTouchAt = Date.now(); }, true);
   function closeSheet() {
     if (typeof nv !== 'undefined' && nv) closeNoteViewer();
     closeFmtMenu();
@@ -3387,8 +3855,8 @@
       ['history', '📦 Stock history', ''], ['docs', '📎 Documents', ''], ['comments', '💬 Comments', ''], ['mynotes', '📝 My notes', 'Your private notes tagged to this item']
     ] },
     profile: { key: 'profileLayout', title: 'Arrange my profile', blocks: [
-      ['comments', '💬 My comments', 'What you wrote and what mentions you'], ['theme', '🎨 App theme', ''], ['blocks', '🧱 Block style', 'Eight looks for each theme'], ['font', '🔤 Font', 'The lettering across the app'], ['pins', '📌 Pins', 'Top bar or floating · reorder, remove'], ['suiLook', '🧭 Floating menu', 'Color, opacity and frost of the menu row'], ['wallpaper', '🖼 Wallpaper', 'A background for each theme'], ['emoji', '😀 My emoji', 'Build your own, animated'], ['mynotes', '📝 My notes', 'Private notes with links and PDFs'], ['formats', '📋 Details & items format', 'Three layouts each, per theme'], ['loader', '⏳ Loading logo', ''], ['phover', '🖱 Photo hover', 'What item photos do under the mouse'],
-      ['opening', '🎬 Opening slide-ups', 'Fourteen ways panels can appear, plus page turns'],
+      ['comments', '💬 My comments', 'What you wrote and what mentions you'], ['myact', '🔗 My activity', 'Orders, POs, returns, projects and contacts with your name on them'], ['theme', '🎨 App theme', ''], ['blocks', '🧱 Block style', 'Eight looks for each theme'], ['font', '🔤 Font', 'The lettering across the app'], ['pins', '📌 Pins', 'Top bar or floating · reorder, remove'], ['suiLook', '🧭 Floating menu', 'Color, opacity and frost of the menu row'], ['wallpaper', '🖼 Wallpaper', 'A background for each theme'], ['emoji', '😀 My emoji', 'Build your own, animated'], ['mynotes', '📝 My notes', 'Private notes with links and PDFs'], ['formats', '📋 Details & items format', 'Three layouts each, per theme'], ['loader', '⏳ Loading logo', ''], ['phover', '🖱 Photo hover', 'What item photos do under the mouse'],
+      ['opening', '🎬 Opening slide-ups', 'Nineteen ways panels can appear, plus page turns'],
       ['closing', '✕ Closing slide-ups', 'Close button, swipe down, close bar'],
       ['itemPics', '🖼 Item pictures', 'How photos look in the item lists'], ['orderPics', '🖼 Order pictures', 'How photos look on order cards'],
     ] },
@@ -3436,7 +3904,9 @@
     try { saved = JSON.parse(localStorage.getItem(L.key)) || layoutFallback[kind] || []; } catch (e) { saved = layoutFallback[kind] || []; }
     const known = L.blocks.map(b => b[0]);
     const order = (Array.isArray(saved) ? saved : []).filter((k, i, a) => known.includes(k) && a.indexOf(k) === i);
-    return order.concat(known.filter(k => !order.includes(k)));
+    if (!order.length) return known;
+    known.forEach((k, i) => { if (order.includes(k)) return; const at = i ? order.indexOf(known[i - 1]) : -1; order.splice(at + 1, 0, k); });
+    return order;
   }
   function saveLayout(kind, order) {
     layoutFallback[kind] = order;
@@ -4128,7 +4598,8 @@
     sh.addEventListener('touchstart', e => {
       y0 = null;
       if (!document.documentElement.dataset.swipe || !sh.classList.contains('open') || e.touches.length > 1 || sh.scrollTop > 0) return;
-      if (e.target.closest('input, textarea, select, [contenteditable], .fmt-menu, canvas')) return;
+      if (e.target.closest('input, textarea, select, label, button, summary, a, [contenteditable], .fmt-menu, canvas')) return;
+      const f = document.activeElement; if (f && sh.contains(f) && /^(INPUT|TEXTAREA|SELECT)$/.test(f.tagName)) return;
       y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; dy = 0; live = false; t0 = Date.now();
     }, { passive: true });
     sh.addEventListener('touchmove', e => {

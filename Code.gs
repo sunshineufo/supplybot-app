@@ -228,7 +228,7 @@ function requireRole_(min) {
 function getMe() {
   const role = myRole_();
   return { email: currentUser_(), role, roleName: ROLE_NAMES[role] || '', isOwner: currentUser_().toLowerCase() === ownerEmail_(), ownerEmail: ownerEmail_(),
-    hidden: role ? myHiddenScreens_() : [], resume: role ? myResume_() : '', appUrl: appUrl_(), sbAi: !!role && sbAiAllowed_() };
+    hidden: role ? myHiddenScreens_() : [], resume: role ? myResume_() : '', appUrl: appUrl_(), sbAi: !!role && sbAiAllowed_(), countSheet: role ? countAccess_() : '' };
 }
 /** The app's own web address, for the "Reload" button the app shows if its connection was lost while the phone slept. */
 function appUrl_() { try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; } }
@@ -1577,6 +1577,104 @@ function setColorLabels(labels, hidden, monthly) {
 // rows are left blank. It never adds a second column for the same month.
 const MONTH_COL_RE = /^(\d{2})\.(\d{2})\.(\d{2})\s*\/\s*Starting Qty$/i;
 const MONTHLY_TRIGGER_FN = 'monthlyCountsTick';
+
+// ---------- 🧮 Count sheet (the app owner only) ----------
+// The column just left of Available Today (normally this month's "MM.DD.YY / Starting Qty") and Available Today itself,
+// for every row, to look over and edit in one place. Available Today edits go through the normal stock change (so they
+// show in Stock history as "Count edit"); the left column is written as is and noted in the App Log.
+function requireOwner_() {
+  if (currentUser_().toLowerCase() !== ownerEmail_()) throw new Error('Only the app owner can do that.');
+}
+// Who else may use it: admins the owner picks, each 'view' (look only) or 'edit'. Kept in Script Properties.
+// Someone who stops being an admin loses it automatically.
+const COUNT_ACCESS_KEY = 'countSheetAccess';
+function countAccessMap_() { try { const m = JSON.parse(PropertiesService.getScriptProperties().getProperty(COUNT_ACCESS_KEY) || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; } }
+/** 'owner' | 'edit' | 'view' | '' for the person using the app. */
+function countAccess_() {
+  const me = currentUser_().toLowerCase();
+  if (me === ownerEmail_()) return 'owner';
+  if (myRole_() !== 'Admin') return '';
+  const v = countAccessMap_()[me];
+  return v === 'edit' || v === 'view' ? v : '';
+}
+function requireCountAccess_(edit) {
+  const a = countAccess_();
+  if (!a) throw new Error('The count sheet is only for the app owner and the admins they choose.');
+  if (edit && a === 'view') throw new Error('You can look at the count sheet but not change it. Ask the app owner for edit access.');
+  return a;
+}
+/** Owner: every admin and their count sheet access. */
+function getCountAccess() {
+  requireRole_('Viewer'); requireOwner_();
+  const m = countAccessMap_(), owner = ownerEmail_();
+  return readUsers_().filter(u => u.role === 'Admin' && u.email !== owner).map(u => ({ email: u.email, note: u.note, access: m[u.email] === 'edit' || m[u.email] === 'view' ? m[u.email] : '' }));
+}
+/** Owner: level '' (none), 'view' or 'edit' for one admin. */
+function setCountAccess(email, level) {
+  requireRole_('Viewer'); requireOwner_();
+  email = String(email || '').trim().toLowerCase(); level = level === 'edit' || level === 'view' ? level : '';
+  const u = readUsers_().find(x => x.email === email);
+  if (!u || u.role !== 'Admin') throw new Error('Only admins can be given the count sheet. Make them an admin first.');
+  return withLock_(() => {
+    const m = countAccessMap_(); if (level) m[email] = level; else delete m[email];
+    PropertiesService.getScriptProperties().setProperty(COUNT_ACCESS_KEY, JSON.stringify(m));
+    logSheet_().appendRow([new Date(), currentUser_(), 'Count sheet access', '', email, '', '', 0, '', level ? (level === 'edit' ? 'Can view and edit' : 'Can view') : 'No access']);
+    return getCountAccess();
+  });
+}
+function countGridCols_(sheet) {
+  const cols = columns_(sheet), headers = headerRow_(sheet), left = cols.quantity - 1;
+  if (left < 0) throw new Error('There is no column to the left of Available Today.');
+  return { cols, left, leftTitle: String(headers[left] || '').trim() || 'Column ' + (left + 1), availTitle: String(headers[cols.quantity] || 'Available Today').trim() };
+}
+function getCountGrid() {
+  requireRole_('Viewer'); const access = requireCountAccess_(false);
+  const sheet = master_(), g = countGridCols_(sheet), last = lastItemRow_(sheet, g.cols);
+  if (last < 2) return { leftTitle: g.leftTitle, availTitle: g.availTitle, rows: [], access };
+  const all = readRows_(sheet, 2, last - 1), n = last - 1;
+  const leftVals = sheet.getRange(2, g.left + 1, n, 1).getValues(), leftFills = sheet.getRange(2, g.left + 1, n, 1).getBackgrounds();
+  const fills = sheet.getRange(2, g.cols.quantity + 1, n, 1).getBackgrounds();
+  const num = v => v === '' || v == null ? '' : isNaN(Number(v)) ? String(v) : Number(v);
+  const rows = [];
+  all.values.forEach((row, i) => {
+    const it = rowToItem_(row, i + 2, g.cols, all.shown[i]); if (!it.name) return;
+    rows.push({ row: i + 2, key: it.key, name: it.name, partNumber: it.partNumber, location: it.location, shelf: it.shelf, job: it.job,
+      qtyColor: cellFill_(fills[i][0]), leftColor: cellFill_(leftFills[i][0]), left: num(leftVals[i][0]), avail: num(row[g.cols.quantity]) });
+  });
+  return { leftTitle: g.leftTitle, availTitle: g.availTitle, rows, access };
+}
+/** changes: [{ row, key, left?, avail? }] (only what changed). leftTitle: the column the form was showing (refused if it moved). */
+function saveCountGrid(changes, leftTitle) {
+  requireRole_('Viewer'); requireCountAccess_(true);
+  changes = (Array.isArray(changes) ? changes : []).slice(0, 2000);
+  if (!changes.length) return { saved: 0, rows: [] };
+  return withLock_(() => {
+    const sheet = master_(), g = countGridCols_(sheet);
+    if (leftTitle && g.leftTitle !== String(leftTitle)) throw new Error('The column left of Available Today is now "' + g.leftTitle + '". Reopen the count sheet and try again.');
+    const out = [], whole = v => { const n = Number(v); if (v === '' || !isFinite(n) || n < 0 || Math.floor(n) !== n) throw new Error('Counts are whole numbers, 0 or more.'); return n; };
+    let saved = 0;
+    changes.forEach(c => {
+      const rowNum = locate_(sheet, g.cols, c.row, String(c.key || ''));
+      if (c.left !== undefined) {
+        const cell = sheet.getRange(rowNum, g.left + 1), before = cell.getValue(), v = c.left === '' || c.left === null ? '' : whole(c.left);
+        if (String(before) !== String(v)) { cell.setValue(v); log_('Count sheet edit', readItem_(sheet, g.cols, rowNum), 0, g.leftTitle + ': ' + (before === '' ? '(blank)' : before) + ' → ' + (v === '' ? '(blank)' : v)); saved++; }
+      }
+      if (c.avail !== undefined) {
+        const cur = Number(sheet.getRange(rowNum, g.cols.quantity + 1).getValue()) || 0, delta = whole(c.avail) - cur;
+        if (delta) { applyStockChange_(sheet, g.cols, rowNum, delta, { type: 'Count edit', note: 'Count sheet' }); saved++; }
+      }
+      if (c.color !== undefined) {   // 🏷 the label: Available Today's fill colour ('' takes it off)
+        const cell = sheet.getRange(rowNum, g.cols.quantity + 1), before = cellFill_(cell.getBackground());
+        const hex = c.color ? cellFill_(String(c.color).trim()) : '';
+        if (c.color && !hex) throw new Error('"' + c.color + '" isn’t a colour.');
+        if (hex !== before) { cell.setBackground(hex || null); log_('Label changed', readItem_(sheet, g.cols, rowNum), 0, (before || 'no label') + ' → ' + (hex || 'no label')); saved++; }
+      }
+      const it = readItem_(sheet, g.cols, rowNum), lv = sheet.getRange(rowNum, g.left + 1).getValue();
+      out.push({ row: rowNum, key: it.key, left: lv === '' ? '' : Number(lv), avail: it.quantity, qtyColor: it.qtyColor });
+    });
+    return { saved, rows: out };
+  });
+}
 
 /** The owner and admins see every item; everyone else only the green-labelled ones. */
 function seesAllItems_() { return myRole_() === 'Admin' || currentUser_().toLowerCase() === ownerEmail_(); }
