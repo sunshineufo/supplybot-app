@@ -1,3 +1,86 @@
+  function pmSentText(v) {
+    const [when, who, tk] = String(v).split(' · ');
+    return `📝 PM note sent to HubSpot ${when || ''}${who ? ' by ' + personName(who) : ''}${tk ? ' (' + tk + ')' : ''}`;
+  }
+  async function openPmNote(no) {
+    if (viewOnly()) return;
+    openSheet(`<h2>📝 Send PM a note</h2><div class="loading">Writing the note for ${esc(no)}…</div>`);
+    $('sheet').dataset.panel = 'pmnote';
+    let r;
+    try { r = await api('getPmNote', no); } catch (e) { closeSheet(); return fail(e); }
+    if ($('sheet').dataset.panel !== 'pmnote') return;
+    const tk = r.ticketId
+      ? `<div class="muted-note" style="padding:4px 0 0">🎫 ${r.ticketName ? `<b>${esc(r.ticketName)}</b> · ` : ''}<a href="${esc(r.ticketUrl)}" target="_blank" rel="noopener">Open the ticket in HubSpot ↗</a></div>`
+      : '<div class="muted-note" style="padding:4px 0 0">No HubSpot ticket link found on this order. Paste the ticket’s link or ID.</div>';
+    openSheet(`<h2 style="margin-bottom:2px">📝 Send PM a note</h2>
+      <div class="muted-note" style="padding:0 0 6px">${esc(no)} · Check and edit the note below. Nothing is posted until you tap <b>Post to HubSpot</b>.</div>
+      ${!r.connected ? `<div class="pm-warn">HubSpot isn’t connected yet, so this note can’t be posted. The app’s owner needs to add a
+        HubSpot token (see “Send PM a note” in SETUP.md). You can still copy the note.</div>` : ''}
+      ${r.sent ? `<div class="pm-warn">A note was already sent: ${esc(pmSentText(r.sent).replace(/^📝 /, ''))}.</div>` : ''}
+      <label>HubSpot ticket</label>
+      <input id="pmTicket" class="field" autocomplete="off" placeholder="Ticket ID or link" value="${esc(r.ticketId)}">
+      ${tk}
+      <label>Note</label>
+      <textarea id="pmText" class="field pm-text" rows="18" maxlength="20000">${esc(r.text)}</textarea>
+      <button class="attach-btn" style="margin-top:8px" onclick="copyPmNote()">📋 Copy the note</button>
+      <div class="sticky-foot">
+        <button class="btn ghost" onclick="openOrder('${esc(no)}')">Back</button>
+        <button class="btn primary" id="pmPost" ${r.connected ? '' : 'disabled'} onclick="sendPmNote('${esc(no)}')">Post to HubSpot</button>
+      </div>`);
+    $('sheet').dataset.panel = 'pmnote';
+  }
+  function copyPmNote() {
+    const t = $('pmText');
+    if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(() => toast('Note copied'), () => { t.select(); document.execCommand('copy'); toast('Note copied'); });
+    else { t.select(); document.execCommand('copy'); toast('Note copied'); }
+  }
+  async function sendPmNote(no) {
+    if (viewOnly()) return;
+    const ticket = $('pmTicket').value.trim(), text = $('pmText').value.trim();
+    if (!ticket) return toast('Enter the HubSpot ticket ID or link', true);
+    if (!text) return toast('The note is empty', true);
+    if (!confirm(`Post this note to HubSpot ticket ${ticket.replace(/.*[/]/, '')}?`)) return;
+    $('pmPost').disabled = true;
+    try {
+      const res = await api('postPmNote', no, ticket, text);
+      const o = orderByNo(no);
+      if (o) o.pmNote = res.sent;
+      openOrder(no);
+      toast(`Note posted to HubSpot ticket ${res.ticketId}`);
+    } catch (e) { if ($('pmPost')) $('pmPost').disabled = false; fail(e); }
+  }
+  let trk = null;
+  function trackerText(v) {
+    const [when, who, n] = String(v).split(' · ');
+    return `🧾 Logged in the tracker ${when || ''}${who ? ' by ' + personName(who) : ''}${n ? ' (' + n + ')' : ''}`;
+  }
+  const trackerAudit = day => /^\d{4}-\d{2}-\d{2}$/.test(day || '')
+    ? new Date(day + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) + ' Counts' : '';
+  const TRK_HEAD = [['date', 'Date'], ['audit', 'Audit Period'], ['activity', 'Activity type'], ['service', 'Service/Monta Migration'],
+    ['projectName', 'Project Name'], ['projectNo', 'Project #'], ['from', 'From Location'], ['to', 'To Location'],
+    ['contact', 'Point of Contact'], ['freight', 'Freight Service / Company'], ['vendor', 'Company / Vendor'], ['pm', 'PM']];
+  async function openTracker(no) {
+    if (viewOnly()) return;
+    openSheet(`<h2>🧾 Log entry in tracker</h2><div class="loading">Reading ${esc(no)} and the tracker…</div>`);
+    $('sheet').dataset.panel = 'tracker';
+    let r;
+    try { r = await api('getTrackerDraft', no); } catch (e) { closeSheet(); return fail(e); }
+    if ($('sheet').dataset.panel !== 'tracker') return;
+    trk = Object.assign(r, { autoAudit: r.head.audit });
+    renderTracker();
+  }
+  async function openReturnTracker(i) {
+    const past = i != null ? retList && retList[i] : null;
+    if (viewOnly() || (i != null ? !past : !rcvDone)) return;
+    const back = () => past ? openReturns(true) : showRcvDone();
+    openSheet(`<h2>🧾 Log entry in tracker</h2><div class="loading">Reading the return and the tracker…</div>`);
+    $('sheet').dataset.panel = 'tracker';
+    let r;
+    try { r = await api('getReturnTrackerDraft', past ? past.adjIds : rcvDone.res.adjustments.map(a => a.id)); } catch (e) { back(); return fail(e); }
+    if ($('sheet').dataset.panel !== 'tracker') return;
+    trk = Object.assign(r, { kind: 'return', past, isPo: !!(past ? retKind === 'po' : rcvDone.done.mode === 'po'), autoAudit: r.head.audit });
+    renderTracker();
+  }
   function trkSelect(list, value, onchange, label, blank) {
     const opts = (value && !list.includes(value) ? [value] : []).concat(list);
     return `<select class="field" aria-label="${esc(label)}" onchange="${onchange}">
@@ -1632,11 +1715,26 @@
       let x = innerWidth - 40, y = 40, onPin = false;
       if (t && t.r) { x = t.r.left + t.r.width / 2; y = t.r.top + t.r.height / 2; onPin = true; } else if (t) { x = t.x; y = t.y; }
       else { const p = [...document.querySelectorAll('.pin-btn, .pfree, .pf-btn')].map(e => e.getBoundingClientRect()).find(r => r.width && r.top >= 0); if (p) { x = p.left + p.width / 2; y = p.top + p.height / 2; onPin = true; } }
-      const r = el.getBoundingClientRect();
+      const r = { left: el.offsetLeft, top: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight };
       el.style.setProperty('--sfx-ox', Math.round(x - r.left) + 'px'); el.style.setProperty('--sfx-oy', Math.round(y - r.top) + 'px');
       if (fxCalm()) return;
-      fxLayer('fx-pin', `<i class="pp-ring" style="left:${x}px;top:${y}px"></i><i class="pp-ring r2" style="left:${x}px;top:${y}px"></i>${onPin ? `<b class="pp-pin" style="left:${x}px;top:${y}px">📌</b>` : ''}
-        ${Array.from({ length: 10 }, (_, i) => `<s class="pp-dot" style="left:${x}px;top:${y}px;--a:${i * 36}deg;--d:${40 + (i % 3) * 16}px"></s>`).join('')}`, 900);
+      const cx = r.left + r.width / 2, cy = Math.min(innerHeight - 80, r.top + Math.min(r.height, innerHeight) * .35), ang = Math.atan2(cy - y, cx - x) * 180 / Math.PI, len = Math.hypot(cx - x, cy - y);
+      const cols = ['#e0f2ff', '#22d3ee', '#b6ff5c', '#facc15', '#ffffff', 'var(--brand)'];
+      const sparks = Array.from({ length: 22 }, (_, i) => { const a = Math.random() * 360, d = 50 + Math.random() * 110, sz = 4 + Math.random() * 6;
+        return `<s class="pp-spark" style="left:${x}px;top:${y}px;--a:${a}deg;--d:${d}px;--g:${30 + Math.random() * 60}px;--sz:${sz}px;--c:${cols[i % cols.length]};--dl:${(Math.random() * .12).toFixed(2)}s"></s>`; }).join('');
+      const zig = (x0, y0, x1, y1, steps, amp) => { let d = `M${x0.toFixed(1)} ${y0.toFixed(1)}`; const L = Math.hypot(x1 - x0, y1 - y0), nx = -(y1 - y0) / (L || 1), ny = (x1 - x0) / (L || 1);
+        for (let k = 1; k <= steps; k++) { const f = k / steps, j = k === steps ? 0 : (Math.random() - .5) * amp; d += ` L${(x0 + (x1 - x0) * f + nx * j).toFixed(1)} ${(y0 + (y1 - y0) * f + ny * j).toFixed(1)}`; } return { d, L }; };
+      const bolts = [[0, false, 0], [.12, true, 26], [.26, false, -18], [.4, true, 34]].map(([dl, thin, off]) => { const z = zig(x, y, cx + off, cy, 10, Math.min(70, len / 5)), L = Math.round(z.L * 1.5);
+        return `<path d="${z.d}" class="tf-bolt pp-bolt${thin ? ' thin' : ''}" stroke-dasharray="${L}" style="--t:${dl}s;--len:${L}"/>`; }).join('');
+      const arcs = Array.from({ length: 8 }, (_, k) => { const a = k / 8 * Math.PI * 2 + Math.random() * .5, r1 = 14, r2 = 34 + Math.random() * 26;
+        const z = zig(x + Math.cos(a) * r1, y + Math.sin(a) * r1, x + Math.cos(a) * r2, y + Math.sin(a) * r2, 4, 12), L = Math.round(z.L * 1.6);
+        return `<path d="${z.d}" class="tf-bolt thin pp-arc" stroke-dasharray="${L}" style="--t:${(k % 4) * .07}s;--len:${L}"/>`; }).join('');
+      const NS = 'http:' + '\x2F\x2Fwww.w3.org/2000/svg';
+      fxLayer('fx-pin', `<i class="pp-flash" style="left:${x}px;top:${y}px"></i><i class="pp-rays" style="left:${x}px;top:${y}px"></i>
+        <i class="pp-ring" style="left:${x}px;top:${y}px"></i><i class="pp-ring r2" style="left:${x}px;top:${y}px"></i><i class="pp-ring r3" style="left:${x}px;top:${y}px"></i>
+        <svg class="pp-zap" xmlns="${NS}" viewBox="0 0 ${innerWidth} ${innerHeight}" width="${innerWidth}" height="${innerHeight}">${bolts}${arcs}<circle cx="${cx}" cy="${cy}" r="10" class="tf-spark" style="--t:.18s"/></svg>
+        <i class="pp-hit" style="left:${cx}px;top:${cy}px"></i>
+        ${onPin ? `<b class="pp-pin" style="left:${x}px;top:${y}px">📌</b>` : ''}${sparks}`, 1300);
     },
     crate(el) {
       if (fxCalm()) return;

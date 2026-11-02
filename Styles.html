@@ -1105,7 +1105,8 @@
   .stat b { display: inline; font-size: 15px; line-height: 1.2; }
   .stat span { font-size: 12px; color: var(--muted); white-space: nowrap; }
   /* 📊 Most on hand (top 4 by quantity) */
-  .topq { margin: 8px 0 10px; display: grid; gap: 6px; flex-basis: 100%; width: 100%; }
+  .topq { margin: 8px 0 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; flex-basis: 100%; width: 100%; min-width: 0; max-width: 100%; }
+  .topq-h, .topq-views { min-width: 0; max-width: 100%; }
   .qtysum .topq span, .qtysum .topq b { margin-right: 0; }   /* the Totals box styles its own words; not inside the chart */
   .qtysum .topq-h b { font-size: 13px; }
   .qtysum .topq-l { color: var(--text); }
@@ -1115,6 +1116,23 @@
   .topq-seg { display: inline-flex; padding: 2px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); }
   .topq-seg button { border: 0; background: none; color: var(--muted); font: 600 11.5px inherit; padding: 3px 9px; border-radius: 999px; cursor: pointer; }
   .topq-seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .topq-views { display: flex; gap: 5px; overflow-x: auto; flex: 1 1 100%; padding-bottom: 2px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .topq-views::-webkit-scrollbar { display: none; }
+  .topq-views button { flex: none; border: 1px solid var(--line); background: var(--card); color: var(--muted); font: 650 12px inherit; padding: 5px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+  .topq-views button.on { color: var(--text); border-color: var(--brand); background: var(--brand-soft); }
+  .topq-note, .qtysum .topq-note { flex-basis: 100%; color: var(--muted); font-size: 11.5px; text-align: left; }
+  .topq-empty { font-size: 12.5px; color: var(--muted); padding: 6px 2px; }
+  .topq-t { position: relative; } .topq-t u { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--text); opacity: .55; border-radius: 1px; }
+  .topq-r.bad .topq-t i { background: #dc2626; } .qtysum .topq-r.bad b { color: #dc2626; }
+  .qtysum .topq-r b small { font-size: 11px; color: var(--muted); font-weight: 600; }
+  .oq-grp { display: flex; flex-wrap: wrap; } .oq-grp button { white-space: nowrap; }
+  .mix-bar { display: flex; gap: 2px; height: 18px; border-radius: 6px; overflow: hidden; margin-top: 2px; }
+  .mix-bar i { display: block; min-width: 3px; }
+  .mix-key { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; }
+  .mix-key button { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; padding: 3px 2px; cursor: pointer; border-radius: 6px; }
+  .mix-key button:disabled { cursor: default; } .mix-key i { width: 12px; height: 12px; border-radius: 3px; }
+  .qtysum .mix-key span { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; color: var(--text); }
+  .qtysum .mix-key b { font-size: 12.5px; } .qtysum .mix-key small { grid-column: 2 / -1; font-size: 11px; color: var(--muted); text-align: left; flex-basis: auto; margin-top: -3px; }
   .topq-r { display: grid; grid-template-columns: minmax(0, 38%) 1fr auto; align-items: center; gap: 8px; width: 100%; padding: 3px 2px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
   .topq-r:hover, .topq-r:focus-visible { background: color-mix(in srgb, var(--brand) 8%, transparent); }
   .topq-l { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1632,18 +1650,48 @@
   :root[data-sheetfx="thunder"] .sfx-in { animation: sfxThunder .85s cubic-bezier(.2, .9, .3, 1) backwards; }
   /* ---------- 🎬 Supplybot entrances (playOpenFx → SB_FX draws the layer; these move the panel) ---------- */
   .sb-fx { position: fixed; inset: 0; z-index: 60; pointer-events: none; overflow: hidden; }
-  /* 📌 Out of the pin */
-  :root[data-sheetfx="pinpop"] .sfx-in { transform-origin: var(--sfx-ox, 90%) var(--sfx-oy, 0); animation: sfxPin .8s cubic-bezier(.25, .8, .25, 1.1) backwards; }
-  @keyframes sfxPin { 0% { opacity: 0; transform: scale(.03) rotate(-14deg); border-radius: 50%; } 22% { opacity: 1; transform: scale(.12, .08) rotate(-10deg); border-radius: 45%; } 45% { transform: scale(.45, .35) rotate(-4deg); border-radius: 30%; }
-    75% { transform: scale(1.02) rotate(.5deg); border-radius: 20px 20px 0 0; } 100% { opacity: 1; transform: none; } }
-  .fx-pin .pp-ring { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; border: 3px solid var(--brand); opacity: 0; animation: ppRing .6s ease-out forwards; }
-  .fx-pin .pp-ring.r2 { animation-delay: .12s; border-color: #f43f5e; }
-  .fx-pin .pp-pin { position: absolute; font-size: 34px; line-height: 1; transform: translate(-50%, -50%); animation: ppJump .7s cubic-bezier(.3, 1.6, .5, 1) forwards; filter: drop-shadow(0 6px 8px rgba(0,0,0,.35)); }
-  .fx-pin .pp-dot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 8px var(--brand); animation: ppDot .55s ease-out forwards; }
-  .fx-pin .pp-dot:nth-child(odd) { background: #f43f5e; box-shadow: 0 0 8px #f43f5e; }
-  @keyframes ppRing { 0% { opacity: .9; transform: scale(.4); } 100% { opacity: 0; transform: scale(7); } }
-  @keyframes ppJump { 0% { transform: translate(-50%, -50%) scale(1); } 35% { transform: translate(-50%, -150%) scale(1.5) rotate(-20deg); } 70% { transform: translate(-50%, -60%) scale(1.1) rotate(10deg); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(.6); opacity: 0; } }
-  @keyframes ppDot { 0% { opacity: 1; transform: rotate(var(--a)) translateX(0) scale(1); } 100% { opacity: 0; transform: rotate(var(--a)) translateX(var(--d)) scale(.3); } }
+  /* 📌 Out of the pin: flash, rays, shockwaves, sparks with a little gravity, a beam to the panel, and the panel unfurls with a glow */
+  :root[data-sheetfx="pinpop"] .sfx-in { transform-origin: var(--sfx-ox, 90%) var(--sfx-oy, 0); animation: sfxPin .9s cubic-bezier(.2, .9, .25, 1.1) .06s backwards, sfxPinGlow 1.2s ease-out .06s backwards; }
+  @keyframes sfxPin { 0% { opacity: 0; transform: scale(.02) rotate(-24deg); border-radius: 50%; filter: brightness(2.4) saturate(1.4); }
+    18% { opacity: 1; transform: scale(.1, .07) rotate(-16deg); border-radius: 50%; }
+    42% { transform: scale(.55, .4) rotate(-5deg) skewX(-4deg); border-radius: 36%; filter: brightness(1.5); }
+    68% { transform: scale(1.04, .97) rotate(1deg); border-radius: 22px 22px 0 0; filter: brightness(1.1); }
+    82% { transform: scale(.985, 1.015) rotate(-.4deg); }
+    100% { opacity: 1; transform: none; filter: none; } }
+  @keyframes sfxPinGlow { 0%, 25% { box-shadow: 0 0 0 2px #22d3ee, 0 0 40px 10px rgba(34,211,238,.6); } 35% { box-shadow: 0 0 0 2px #b6ff5c, 0 0 30px 6px rgba(182,255,92,.5); } 45% { box-shadow: 0 0 0 2px #22d3ee, 0 0 44px 12px rgba(34,211,238,.6); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .fx-pin .pp-flash { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: radial-gradient(circle, #fff 0 30%, color-mix(in srgb, var(--brand) 80%, #fff) 45%, transparent 70%);
+    animation: ppFlash .5s ease-out forwards; mix-blend-mode: screen; }
+  .fx-pin .pp-rays { position: absolute; width: 260px; height: 260px; margin: -130px 0 0 -130px; border-radius: 50%; opacity: 0;
+    background: repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--brand) 75%, #fff) 0 5deg, transparent 5deg 22deg);
+    -webkit-mask: radial-gradient(circle, transparent 12%, #000 18%, #000 40%, transparent 70%); mask: radial-gradient(circle, transparent 12%, #000 18%, #000 40%, transparent 70%);
+    animation: ppRays .8s ease-out forwards; }
+  .fx-pin .pp-ring { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; border: 4px solid var(--brand); opacity: 0; box-shadow: 0 0 14px var(--brand); animation: ppRing .75s cubic-bezier(.2, .7, .3, 1) forwards; }
+  .fx-pin .pp-ring.r2 { animation-delay: .1s; border-color: #f43f5e; box-shadow: 0 0 14px #f43f5e; border-width: 3px; }
+  .fx-pin .pp-ring.r3 { animation-delay: .2s; border-color: #fff; box-shadow: 0 0 10px #fff; border-width: 2px; }
+  .fx-pin .pp-beam { position: absolute; height: 4px; margin-top: -2px; transform-origin: 0 50%; border-radius: 4px; opacity: 0;
+    background: linear-gradient(90deg, #fff, var(--brand) 30%, color-mix(in srgb, var(--brand) 40%, transparent)); box-shadow: 0 0 12px var(--brand), 0 0 24px var(--brand); animation: ppBeam .55s .08s ease-out forwards; }
+  .fx-pin .pp-zap { position: absolute; inset: 0; overflow: visible; }
+  .fx-pin .pp-bolt { stroke: #f0fbff; filter: drop-shadow(0 0 3px #fff) drop-shadow(0 0 10px #22d3ee) drop-shadow(0 0 24px #3b82f6); }
+  .fx-pin .pp-arc { stroke: #e0f7ff; filter: drop-shadow(0 0 4px #22d3ee) drop-shadow(0 0 10px #b6ff5c); animation-duration: .4s; }
+  .fx-pin .pp-hit { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; opacity: 0;
+    background: radial-gradient(circle, #fff 0 25%, #22d3ee 45%, transparent 70%); animation: ppFlash .45s .2s ease-out forwards; mix-blend-mode: screen; }
+  .fx-pin .pp-flash { background: radial-gradient(circle, #fff 0 30%, #9be7ff 45%, transparent 70%) !important; }
+  .fx-pin .pp-rays { background: repeating-conic-gradient(from 0deg, #c7f3ff 0 4deg, transparent 4deg 20deg) !important; }
+  .fx-pin .pp-ring { border-color: #22d3ee !important; box-shadow: 0 0 16px #22d3ee !important; } .fx-pin .pp-ring.r2 { border-color: #b6ff5c !important; box-shadow: 0 0 14px #b6ff5c !important; }
+  .fx-pin .pp-pin { position: absolute; font-size: 38px; line-height: 1; transform: translate(-50%, -50%); animation: ppJump .9s cubic-bezier(.3, 1.5, .5, 1) forwards;
+    filter: drop-shadow(0 0 8px #fff) drop-shadow(0 0 18px var(--brand)) drop-shadow(0 6px 8px rgba(0,0,0,.4)); }
+  .fx-pin .pp-spark { position: absolute; width: var(--sz); height: var(--sz); margin: calc(var(--sz) / -2); border-radius: 50%; background: var(--c); box-shadow: 0 0 10px var(--c), 0 0 3px #fff; opacity: 0;
+    animation: ppSpark .9s cubic-bezier(.15, .7, .35, 1) var(--dl) forwards; }
+  .fx-pin .pp-spark:nth-child(3n) { border-radius: 2px; transform: rotate(45deg); }
+  @keyframes ppFlash { 0% { opacity: 1; transform: scale(.3); } 35% { opacity: 1; transform: scale(5); } 100% { opacity: 0; transform: scale(9); } }
+  @keyframes ppRays { 0% { opacity: 0; transform: scale(.2) rotate(0); } 25% { opacity: .95; } 100% { opacity: 0; transform: scale(1.6) rotate(70deg); } }
+  @keyframes ppRing { 0% { opacity: 1; transform: scale(.3); } 100% { opacity: 0; transform: scale(9); } }
+  @keyframes ppBeam { 0% { opacity: 0; clip-path: inset(0 100% 0 0); } 30% { opacity: 1; } 60% { opacity: 1; clip-path: inset(0 0 0 0); } 100% { opacity: 0; clip-path: inset(0 0 0 100%); } }
+  @keyframes ppJump { 0% { transform: translate(-50%, -50%) scale(1) rotate(0); } 30% { transform: translate(-50%, -190%) scale(1.8) rotate(-200deg); }
+    60% { transform: translate(-50%, -80%) scale(1.3) rotate(-360deg); opacity: 1; } 100% { transform: translate(-50%, -50%) scale(.4) rotate(-380deg); opacity: 0; } }
+  @keyframes ppSpark { 0% { opacity: 1; transform: rotate(var(--a)) translateX(0) scale(1.2); }
+    55% { opacity: 1; transform: rotate(var(--a)) translateX(var(--d)) scale(1); }
+    100% { opacity: 0; transform: rotate(var(--a)) translateX(calc(var(--d) * 1.15)) translateY(var(--g)) scale(.3); } }
   /* 📦 Unboxing */
   :root[data-sheetfx="crate"] .sfx-in { transform-origin: 50% 100%; animation: sfxCrate .8s .28s cubic-bezier(.2, .9, .3, 1.15) backwards; }
   @keyframes sfxCrate { 0% { opacity: 0; transform: translateY(30px) scale(.12, .05); } 30% { opacity: 1; transform: translateY(-10px) scale(.3, .5); } 75% { transform: scale(1.02, .99); } 100% { opacity: 1; transform: none; } }
@@ -4968,6 +5016,13 @@
   .qfab[hidden] { display: none !important; }   /* ⚙ Quick-create button off (the flex above would otherwise keep it showing) */   /* only after tapping ＋ (the grid above would otherwise override hidden) */
   .qfab-m button { display: flex; align-items: center; gap: 10px; justify-content: flex-end; border: 1px solid var(--line); background: var(--card); color: var(--text); font-family: inherit; font-weight: 700; font-size: 15px; padding: 10px 16px 10px 14px; border-radius: 999px; box-shadow: 0 8px 20px -8px rgba(0,0,0,.4); cursor: pointer; }
   .qfab-m button span { font-size: 20px; }
+  /* ＋ quick create as a grid of tiles: icon over the words */
+  .qf-grid { display: grid; grid-template-columns: repeat(2, 104px); gap: 8px; justify-content: end; }
+  .qfab-m .qf-tile { flex-direction: column; justify-content: center; gap: 4px; height: 88px; padding: 8px; border-radius: 18px; text-align: center; font-size: 13.5px;
+    box-shadow: 0 10px 22px -10px rgba(0,0,0,.5); transition: transform .12s ease, border-color .12s ease; }
+  .qfab-m .qf-tile:hover, .qfab-m .qf-tile:focus-visible { border-color: var(--brand); transform: translateY(-2px); }
+  .qfab-m .qf-tile span { font-size: 28px; line-height: 1; } .qfab-m .qf-tile b { font-weight: 750; line-height: 1.2; }
+  .qfab-m .qf-tile b em { font-style: normal; font-size: 11px; font-weight: 800; padding: 1px 6px; border-radius: 999px; background: var(--brand); color: var(--on-brand, #fff); margin-left: 3px; vertical-align: 1px; }
   /* ⏱ live timer pins */
   .timer-pins { position: fixed; z-index: 16; left: 12px; bottom: calc(env(safe-area-inset-bottom) + 98px); display: grid; gap: 6px; }
   body.menus-hidden .timer-pins { bottom: calc(env(safe-area-inset-bottom) + 86px); }

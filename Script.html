@@ -701,13 +701,15 @@
     let f = $('qfab');
     if (!f) { f = document.createElement('div'); f.id = 'qfab'; f.className = 'qfab'; document.body.appendChild(f);
       document.addEventListener('pointerdown', e => { if (!e.target.closest('#qfab')) qfabClose(); }, true); }
-    const items = [['🚚', 'New order', 'qfabGo(\'order\')', canSee('orders') && !viewOnly()], ['📝', 'New note', 'qfabGo(\'note\')', true], ['📦', 'New item', 'qfabGo(\'item\')', canEdit()]].filter(x => x[3]);
+    const nn = (noteList || notesCacheGet() || []).length;
+    const items = [['🚚', 'New order', 'qfabGo(\'order\')', canSee('orders') && !viewOnly()], ['📝', 'New note', 'qfabGo(\'note\')', true], ['📦', 'New item', 'qfabGo(\'item\')', canEdit()],
+      ['📒', 'My notes' + (nn ? ` <em>${nn}</em>` : ''), 'qfabGo(\'notes\')', true]].filter(x => x[3]);
     f.hidden = !qfabOn() || !me || !me.role;
     const qp = pins.map((p, i) => ({ p, i, k: 'pin' })).concat(tagPins.map((p, i) => ({ p: Object.assign({ tag: true }, p), i, k: 'tag' }))).filter(x => inQc(x.p));
     f.innerHTML = `<div class="qfab-m" id="qfabM" hidden role="menu">${qp.length ? `<div class="qf-pins">${qp.map(({ p, i, k }) => `<button role="menuitem" class="qf-pin" onclick="qfabPinGo('${k}', ${i})"
         oncontextmenu="event.preventDefault(); qfabPinEdit('${k}', ${i})" onpointerdown="qfabPinHold(event, this, '${k}', ${i})" onpointerup="pinRelease()" onpointerleave="pinRelease()" data-comic="${esc(p.label)}" data-comic-sub="Tap to open · hold to edit">
         <span class="qf-face${p.tag && !pinEmos()[freeKey(p)] && !pinNatives()[freeKey(p)] ? ' tagpin-btn ' + tagColor(p.key) : ''}">${pinFace(p)}</span><span class="qf-lab">${esc(p.label)}</span></button>`).join('')}<small class="qf-pins-l">📌 Pinned here</small></div>` : ''}
-      ${items.map(([ic, l, go]) => `<button role="menuitem" onclick="${go}"><span>${ic}</span>${l}</button>`).join('')}</div>
+      <div class="qf-grid">${items.map(([ic, l, go]) => `<button role="menuitem" class="qf-tile" onclick="${go}"><span>${ic}</span><b>${l}</b></button>`).join('')}</div></div>
       <button class="qfab-b" onclick="qfabToggle()" aria-label="Create new" aria-haspopup="menu" aria-expanded="false" data-tip="New order, note or item"><span class="qf-plain">＋</span></button>`;
     requestAnimationFrame(syncQfabLook);
   }
@@ -741,7 +743,7 @@
     pinCardRefresh();
     toast(v ? '＋ Moved to quick create: tap ＋ to find it' : '📌 Back on the screen');
   }
-  function qfabGo(k) { qfabClose(); if (typeof closeBarSearch === 'function') closeBarSearch(); if (k === 'order') newOrder(); else if (k === 'item') openForm(); else { openMyNotes(); newMyNote(); } }
+  function qfabGo(k) { qfabClose(); if (typeof closeBarSearch === 'function') closeBarSearch(); if (k === 'order') newOrder(); else if (k === 'item') openForm(); else if (k === 'notes') openMyNotes(); else { openMyNotes(); newMyNote(); } }
   let timerPinT = 0;
   function runningTimers() {
     const list = (noteList || notesCacheGet() || []).map(n => noteEdit && noteEdit.id && n.id === noteEdit.id ? noteEdit : n);
@@ -4021,22 +4023,44 @@
     try { localStorage.setItem('ordersTotalsMin', oTotalsMin ? '1' : '0'); } catch (e) {  }
     render();
   }
-  const topQtyMode = () => { try { return localStorage.getItem(emoKey('topQty')) === 'cat' ? 'cat' : 'item'; } catch (e) { return 'item'; } };
-  const topQtyBy = () => { try { return localStorage.getItem(emoKey('topQtyBy')) === 'value' ? 'value' : 'qty'; } catch (e) { return 'qty'; } };
+  const TOPQ_VIEWS = [['qty', '📦', 'Most on hand'], ['value', '💲', 'Most valuable'], ['weight', '⚖', 'Heaviest'], ['drafts', '📝', 'On drafts'], ['low', '⚠', 'Running low'], ['mix', '🧩', 'Stock mix']];
+  const topQtyMode = () => { try { const v = localStorage.getItem(emoKey('topQty')); return v === 'cat' || v === 'loc' ? v : 'item'; } catch (e) { return 'item'; } };
+  const topQtyBy = () => { try { const v = localStorage.getItem(emoKey('topQtyBy')); return TOPQ_VIEWS.some(x => x[0] === v) ? v : 'qty'; } catch (e) { return 'qty'; } };
   function setTopQtyMode(m) { try { localStorage.setItem(emoKey('topQty'), m); } catch (e) {  } render(); }
   function setTopQtyBy(m) { try { localStorage.setItem(emoKey('topQtyBy'), m); } catch (e) {  } render(); }
+  const isDarkUi = () => { const m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body).backgroundColor || ''); return m ? (0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]) < 128 : false; };
+  const MIX_LIGHT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#6250d6'], MIX_DARK = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9'];
+  const lbsShort = v => v >= 2000 ? (v / 2000).toFixed(v >= 20000 ? 0 : 1) + ' tons' : Math.round(v).toLocaleString() + ' lbs';
   function topQtyHtml(list) {
-    const mode = topQtyMode(), by = topQtyBy(), val = i => by === 'value' ? (i.cost == null ? 0 : i.cost * i.quantity) : i.quantity;
+    const by = topQtyBy(), mode0 = topQtyMode(), mode = by === 'low' ? 'item' : by === 'mix' && mode0 === 'item' ? 'cat' : mode0;
+    const val = { qty: i => i.quantity, value: i => i.cost == null ? 0 : i.cost * i.quantity, weight: i => grossLbs(i, i.quantity) || 0, drafts: i => heldOf(i), mix: i => i.quantity }[by] || (i => i.quantity);
+    const fmt = by === 'value' ? moneyShort : by === 'weight' ? lbsShort : v => v.toLocaleString();
+    const unit = { qty: 'available', value: 'in stock', weight: 'in stock', drafts: 'on draft orders', mix: 'available' }[by] || '';
+    const head = `<div class="topq-h"><div class="topq-views">${TOPQ_VIEWS.map(([k, ic, l]) => `<button class="${by === k ? 'on' : ''}" onclick="setTopQtyBy('${k}')">${ic} ${l}</button>`).join('')}</div>
+      ${by === 'low' ? '<small class="topq-note">Items you watch with Track minimum stock, closest to their minimum once drafts ship</small>'
+        : `<span class="topq-seg">${[['item', 'Items'], ['cat', 'Categories'], ['loc', '📍 Locations']].filter(([k]) => !(by === 'mix' && k === 'item')).map(([k, l]) => `<button class="${mode === k ? 'on' : ''}" onclick="setTopQtyMode('${k}')">${l}</button>`).join('')}</span>`}</div>`;
+    if (by === 'low') {
+      const w = list.filter(i => i.minTrack && i.minQty != null).map(i => ({ i, after: afterShip(i), min: Number(i.minQty) || 0 })).sort((a, b) => (a.after - a.min) - (b.after - b.min)).slice(0, 4);
+      if (!w.length) return `<div class="topq">${head}<div class="topq-empty">Nothing is watched yet. Turn on 📉 Track minimum stock on an item's page.</div></div>`;
+      const top = Math.max(...w.map(x => Math.max(x.after, x.min * 2, 1)));
+      return `<div class="topq">${head}${w.map(({ i, after, min }) => `<button class="topq-r ${after <= min ? 'bad' : ''}" onclick="openFromList('${esc(i.id)}', listIds)" data-tip="${esc(i.name)}: ${i.quantity} now · ${after} after drafts ship · minimum ${min}">
+        <span class="topq-l">${esc(i.name)}</span><span class="topq-t"><i style="width:${Math.max(3, Math.round(Math.max(0, after) / top * 100))}%"></i><u style="left:${Math.round(min / top * 100)}%" title="Minimum"></u></span><b>${after}<small>/${min}</small></b></button>`).join('')}</div>`;
+    }
     const live = list.filter(i => i.quantity > 0 && val(i) > 0), total = live.reduce((n, i) => n + val(i), 0);
     let rows;
-    if (mode === 'cat') { const g = new Map(); live.forEach(i => { const l = String(i.category || '').trim() || '(no category)', k = catKey(l); const e = g.get(k) || { k, label: l, v: 0, n: 0 }; e.v += val(i); e.n++; g.set(k, e); });
-      rows = [...g.values()].sort((a, b) => b.v - a.v).slice(0, 4).map(c => ({ label: c.label, sub: c.n + ' item' + (c.n === 1 ? '' : 's'), v: c.v, ic: catEmoji({ key: c.k }), go: `toggleCategory(${esc(JSON.stringify(c.k))})` })); }
-    else rows = live.sort((a, b) => val(b) - val(a)).slice(0, 4).map(i => ({ label: i.name, sub: [by === 'value' ? i.quantity.toLocaleString() + ' × ' + money(i.cost) : '', i.location, i.shelf].filter(Boolean).join(' · '), v: val(i), ic: '', go: `openFromList('${esc(i.id)}', listIds)` }));
-    if (rows.length < 2) return '';
-    const max = rows[0].v || 1, fmt = v => by === 'value' ? moneyShort(v) : v.toLocaleString();
-    return `<div class="topq"><div class="topq-h"><span class="topq-seg big"><button class="${by === 'qty' ? 'on' : ''}" onclick="setTopQtyBy('qty')">📦 Most on hand</button><button class="${by === 'value' ? 'on' : ''}" onclick="setTopQtyBy('value')">💲 Most valuable</button></span>
-        <span class="topq-seg"><button class="${mode === 'item' ? 'on' : ''}" onclick="setTopQtyMode('item')">Items</button><button class="${mode === 'cat' ? 'on' : ''}" onclick="setTopQtyMode('cat')">Categories</button></span></div>
-      ${rows.map(r => `<button class="topq-r" onclick="${r.go}" data-tip="${esc(r.label)}: ${by === 'value' ? money(r.v) + ' in stock' : r.v.toLocaleString() + ' available'} · ${total ? Math.round(r.v / total * 100) : 0}% of the total${r.sub ? '\n' + r.sub : ''}">
+    if (mode === 'item') rows = live.slice().sort((a, b) => val(b) - val(a)).map(i => ({ label: i.name, sub: [by === 'value' ? i.quantity.toLocaleString() + ' × ' + money(i.cost) : by === 'drafts' ? i.quantity + ' now · ' + afterShip(i) + ' after' : '', i.location, i.shelf].filter(Boolean).join(' · '), v: val(i), ic: '', go: `openFromList('${esc(i.id)}', listIds)` }));
+    else { const g = new Map(); live.forEach(i => { const l = String((mode === 'cat' ? i.category : i.location) || '').trim() || (mode === 'cat' ? '(no category)' : '(no location)'), k = mode === 'cat' ? catKey(l) : l; const e = g.get(k) || { k, label: l, v: 0, n: 0 }; e.v += val(i); e.n++; g.set(k, e); });
+      rows = [...g.values()].sort((a, b) => b.v - a.v).map(c => ({ label: c.label, sub: c.n + ' item' + (c.n === 1 ? '' : 's'), v: c.v, ic: mode === 'cat' ? catEmoji({ key: c.k }) : '📍', go: mode === 'cat' ? `toggleCategory(${esc(JSON.stringify(c.k))})` : `locFilter=${esc(JSON.stringify(c.k === '(no location)' ? '' : c.k))};render()` })); }
+    if (rows.length < 2) return by === 'drafts' && !rows.length ? `<div class="topq">${head}<div class="topq-empty">Nothing showing is on a draft order.</div></div>` : rows.length ? '' : '';
+    const tip = r => `${esc(r.label)}: ${by === 'value' ? money(r.v) : by === 'weight' ? fmtLbs(r.v) : r.v.toLocaleString()} ${unit} · ${total ? Math.round(r.v / total * 100) : 0}% of the total${r.sub ? '\n' + esc(r.sub) : ''}`;
+    if (by === 'mix') {
+      const pal = isDarkUi() ? MIX_DARK : MIX_LIGHT, top5 = rows.slice(0, 5), rest = rows.slice(5).reduce((n, r) => n + r.v, 0);
+      const segs = top5.map((r, k) => Object.assign({ c: pal[k] }, r)).concat(rest ? [{ label: 'Other', v: rest, c: 'color-mix(in srgb, var(--text) 30%, transparent)', sub: (rows.length - 5) + ' more', go: '' }] : []);
+      return `<div class="topq">${head}<div class="mix-bar">${segs.map(r => `<i style="flex:${r.v};background:${r.c}" data-tip="${tip(r)}"></i>`).join('')}</div>
+        <div class="mix-key">${segs.map(r => `<button ${r.go ? `onclick="${r.go}"` : 'disabled'} data-tip="${tip(r)}"><i style="background:${r.c}"></i><span>${esc(r.label)}</span><b>${total ? Math.round(r.v / total * 100) : 0}%</b><small>${fmt(r.v)}</small></button>`).join('')}</div></div>`;
+    }
+    rows = rows.slice(0, 4); const max = rows[0].v || 1;
+    return `<div class="topq">${head}${rows.map(r => `<button class="topq-r" onclick="${r.go}" data-tip="${tip(r)}">
         <span class="topq-l">${r.ic ? r.ic + ' ' : ''}${esc(r.label)}</span><span class="topq-t"><i style="width:${Math.max(3, Math.round(r.v / max * 100))}%"></i></span><b>${fmt(r.v)}</b></button>`).join('')}</div>`;
   }
   const moneyShort = v => v >= 1e6 ? '$' + (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + 'M' : v >= 1e4 ? '$' + (v / 1e3).toFixed(1) + 'K' : '$' + Math.round(v).toLocaleString();
@@ -4061,6 +4085,46 @@
       const tip = `🧑‍💼 ${p.pm} · ${n} order${n === 1 ? '' : 's'} · ${p.qty.toLocaleString()} qty · ${money(p.total)}\n` +
         p.list.slice(0, 12).map(({ o, q }) => `${o.orderNo}${o.projectName ? ' · ' + o.projectName : ''} · ${q.toLocaleString()} qty · ${money(orderTotal(o))}`).join('\n') + (n > 12 ? `\n+${n - 12} more` : '');
       return `<i class="ctc" data-tip="${esc(tip)}">🧑‍💼 ${esc(p.pm)} · <b>${n}</b> order${n === 1 ? '' : 's'} · <b>${p.qty.toLocaleString()}</b> qty</i>`; }).join('')}</div>`;
+  }
+  const OQ_VIEWS = [['total', '💲', 'Total $'], ['units', '📦', 'Units'], ['count', '🔢', 'Order count'], ['items', '🔝', 'Top items'], ['month', '📅', 'By month'], ['status', '🧩', 'Status mix']];
+  const OQ_GROUPS = [['order', 'Orders'], ['project', '🏗 Projects'], ['pm', '🧑‍💼 PMs'], ['vendor', '🏢 Companies'], ['to', '📍 To']];
+  const oqBy = () => { try { const v = localStorage.getItem(emoKey('oqBy')); return OQ_VIEWS.some(x => x[0] === v) ? v : 'total'; } catch (e) { return 'total'; } };
+  const oqGroup = () => { try { const v = localStorage.getItem(emoKey('oqGroup')); return OQ_GROUPS.some(x => x[0] === v) ? v : 'order'; } catch (e) { return 'order'; } };
+  function setOq(k, v) { try { localStorage.setItem(emoKey(k), v); } catch (e) {  } render(); }
+  function oqFind(text) { $('search').value = text; render(); }
+  function orderChartHtml(list) {
+    const by = oqBy(), grp = by === 'items' || by === 'month' || by === 'status' ? '' : oqGroup(), counted = list.filter(o => o.status !== 'Cancelled');
+    if (list.length < 2) return '';
+    const head = `<div class="topq-h"><div class="topq-views">${OQ_VIEWS.map(([k, ic, l]) => `<button class="${by === k ? 'on' : ''}" onclick="setOq('oqBy', '${k}')">${ic} ${l}</button>`).join('')}</div>
+      ${grp ? `<span class="topq-seg oq-grp">${OQ_GROUPS.map(([k, l]) => `<button class="${grp === k ? 'on' : ''}" onclick="setOq('oqGroup', '${k}')">${l}</button>`).join('')}</span>` : ''}</div>`;
+    const bars = (rows, fmt, unit, total) => { if (!rows.length) return `<div class="topq">${head}<div class="topq-empty">Nothing to show for these orders.</div></div>`;
+      const max = Math.max(...rows.map(r => r.v)) || 1;
+      return `<div class="topq">${head}${rows.map(r => `<button class="topq-r" ${r.go ? `onclick="${esc(r.go)}"` : ''} data-tip="${esc(r.label)}: ${esc(fmt(r.v, true))} ${unit}${total ? ' · ' + Math.round(r.v / total * 100) + '% of the total' : ''}${r.sub ? '\n' + esc(r.sub) : ''}">
+        <span class="topq-l">${r.ic ? r.ic + ' ' : ''}${esc(r.label)}</span><span class="topq-t"><i style="width:${Math.max(3, Math.round(r.v / max * 100))}%"></i></span><b>${fmt(r.v)}</b></button>`).join('')}</div>`; };
+    if (by === 'status') {
+      const st = [['Draft', '#f59e0b'], ['Shipped', '#16a34a'], ['Cancelled', '#9ca3af']].map(([k, c]) => ({ k, c, n: list.filter(o => o.status === k).length, v: list.filter(o => o.status === k).reduce((n, o) => n + orderTotal(o), 0) })).filter(x => x.n);
+      return `<div class="topq">${head}<div class="mix-bar">${st.map(x => `<i style="flex:${x.n};background:${x.c}" data-tip="${x.k}: ${x.n} order${x.n === 1 ? '' : 's'} · ${money(x.v)}"></i>`).join('')}</div>
+        <div class="mix-key">${st.map(x => `<button onclick="orderFilter='${x.k}';render()"><i style="background:${x.c}"></i><span>${x.k}</span><b>${Math.round(x.n / list.length * 100)}%</b><small>${x.n} order${x.n === 1 ? '' : 's'} · ${moneyShort(x.v)}</small></button>`).join('')}</div></div>`;
+    }
+    if (by === 'month') {
+      const m = new Map(); counted.forEach(o => { const k = String(o.orderDate || '').slice(0, 7); if (!/^\d{4}-\d{2}$/.test(k)) return; m.set(k, (m.get(k) || 0) + orderTotal(o)); });
+      const keys = [...m.keys()].sort().slice(-6), total = keys.reduce((n, k) => n + m.get(k), 0);
+      return bars(keys.map(k => ({ label: new Date(k + '-15T12:00:00').toLocaleDateString([], { month: 'short', year: 'numeric' }), v: m.get(k), go: '' })), (v, full) => full ? money(v) : moneyShort(v), 'in orders', total);
+    }
+    if (by === 'items') {
+      const m = new Map(); counted.forEach(o => (o.lines || []).forEach(l => { const e = m.get(l.key || l.name) || { label: l.name, key: l.key, v: 0, orders: new Set() }; e.v += Number(l.qty) || 0; e.orders.add(o.orderNo); m.set(l.key || l.name, e); }));
+      const rows = [...m.values()].sort((a, b) => b.v - a.v), total = rows.reduce((n, r) => n + r.v, 0);
+      return bars(rows.slice(0, 4).map(r => { const it = items.find(i => i.key === r.key); return { label: r.label, v: r.v, sub: r.orders.size + ' order' + (r.orders.size === 1 ? '' : 's'), go: it ? `openDetail('${it.id}')` : '' }; }), v => v.toLocaleString(), 'units', total);
+    }
+    const val = { total: o => orderTotal(o), units: o => Number(o.totalQty) || 0, count: () => 1 }[by];
+    const fmt = by === 'total' ? (v, full) => full ? money(v) : moneyShort(v) : v => v.toLocaleString(), unit = by === 'total' ? '' : by === 'units' ? 'units' : 'orders';
+    const total = counted.reduce((n, o) => n + val(o), 0);
+    if (grp === 'order') return bars(counted.slice().sort((a, b) => val(b) - val(a)).slice(0, 4).map(o => ({ label: '#' + String(o.orderNo).split('-').pop() + (o.projectName ? ' · ' + o.projectName : ''), v: val(o), sub: [o.orderNo, o.status, o.pm].filter(Boolean).join(' · '), go: `openOrder('${o.orderNo}')` })), fmt, unit, total);
+    const keyOf = { project: o => o.projectName, pm: o => o.pm, vendor: o => o.vendor, to: o => o.toLocation }[grp];
+    const g = new Map(); counted.forEach(o => { const l = String(keyOf(o) || '').trim(); if (!l) return; const k = l.toLowerCase(); const e = g.get(k) || { label: l, v: 0, n: 0 }; e.v += val(o); e.n++; g.set(k, e); });
+    const ic = { project: '🏗', pm: '🧑‍💼', vendor: '🏢', to: '📍' }[grp];
+    const go = l => grp === 'project' ? `openProjectCard(${JSON.stringify(l)})` : grp === 'to' ? `oqFind(${JSON.stringify(l)})` : (c => c ? `openContactCard('${c.id}')` : `oqFind(${JSON.stringify(l)})`)(contactFor(l, grp === 'pm' ? 'pm' : 'vendor'));
+    return bars([...g.values()].sort((a, b) => b.v - a.v).slice(0, 4).map(e => ({ label: e.label, ic, v: e.v, sub: e.n + ' order' + (e.n === 1 ? '' : 's'), go: go(e.label) })), fmt, unit, total);
   }
   function orderTotalsBoxHtml(list) {
     if (!list.length) return '';
@@ -4091,6 +4155,7 @@
     return `<div class="qtysum"><div class="qhead">📊 Totals<span class="qh-btns"><button onclick="toggleOrderTotals()" aria-expanded="true">▴ Minimize</button>${totalsHideBtn()}</span></div>
       <span>Orders showing</span><b>${list.length.toLocaleString()}</b>
       ${mix ? `<small>${mix}${cancelled ? ' · cancelled ones aren’t counted below' : ''}</small>` : ''}
+      ${orderChartHtml(list)}
       ${dateRange(list.map(o => o.orderDate)) ? `<small class="qrange">${dateRangeHtml(list.map(o => o.orderDate), 'Order dates')}</small>` : ''}
       <div class="ext"><span>Items ${verb}</span><b>${qty.toLocaleString()}</b></div>
       <small>${lines.length} line${lines.length === 1 ? '' : 's'}${evse ? ` · <span class="evse-tip" data-tip="${esc(evseTip)}">⚡ ${evse} EVSE</span>` : ''}</small>
@@ -6359,87 +6424,4 @@
     loadOrderDocs(o);
     loadOrderComments(o.orderNo);
     loadOrderPhotos(o.orderNo);
-  }
-  function pmSentText(v) {
-    const [when, who, tk] = String(v).split(' · ');
-    return `📝 PM note sent to HubSpot ${when || ''}${who ? ' by ' + personName(who) : ''}${tk ? ' (' + tk + ')' : ''}`;
-  }
-  async function openPmNote(no) {
-    if (viewOnly()) return;
-    openSheet(`<h2>📝 Send PM a note</h2><div class="loading">Writing the note for ${esc(no)}…</div>`);
-    $('sheet').dataset.panel = 'pmnote';
-    let r;
-    try { r = await api('getPmNote', no); } catch (e) { closeSheet(); return fail(e); }
-    if ($('sheet').dataset.panel !== 'pmnote') return;
-    const tk = r.ticketId
-      ? `<div class="muted-note" style="padding:4px 0 0">🎫 ${r.ticketName ? `<b>${esc(r.ticketName)}</b> · ` : ''}<a href="${esc(r.ticketUrl)}" target="_blank" rel="noopener">Open the ticket in HubSpot ↗</a></div>`
-      : '<div class="muted-note" style="padding:4px 0 0">No HubSpot ticket link found on this order. Paste the ticket’s link or ID.</div>';
-    openSheet(`<h2 style="margin-bottom:2px">📝 Send PM a note</h2>
-      <div class="muted-note" style="padding:0 0 6px">${esc(no)} · Check and edit the note below. Nothing is posted until you tap <b>Post to HubSpot</b>.</div>
-      ${!r.connected ? `<div class="pm-warn">HubSpot isn’t connected yet, so this note can’t be posted. The app’s owner needs to add a
-        HubSpot token (see “Send PM a note” in SETUP.md). You can still copy the note.</div>` : ''}
-      ${r.sent ? `<div class="pm-warn">A note was already sent: ${esc(pmSentText(r.sent).replace(/^📝 /, ''))}.</div>` : ''}
-      <label>HubSpot ticket</label>
-      <input id="pmTicket" class="field" autocomplete="off" placeholder="Ticket ID or link" value="${esc(r.ticketId)}">
-      ${tk}
-      <label>Note</label>
-      <textarea id="pmText" class="field pm-text" rows="18" maxlength="20000">${esc(r.text)}</textarea>
-      <button class="attach-btn" style="margin-top:8px" onclick="copyPmNote()">📋 Copy the note</button>
-      <div class="sticky-foot">
-        <button class="btn ghost" onclick="openOrder('${esc(no)}')">Back</button>
-        <button class="btn primary" id="pmPost" ${r.connected ? '' : 'disabled'} onclick="sendPmNote('${esc(no)}')">Post to HubSpot</button>
-      </div>`);
-    $('sheet').dataset.panel = 'pmnote';
-  }
-  function copyPmNote() {
-    const t = $('pmText');
-    if (navigator.clipboard) navigator.clipboard.writeText(t.value).then(() => toast('Note copied'), () => { t.select(); document.execCommand('copy'); toast('Note copied'); });
-    else { t.select(); document.execCommand('copy'); toast('Note copied'); }
-  }
-  async function sendPmNote(no) {
-    if (viewOnly()) return;
-    const ticket = $('pmTicket').value.trim(), text = $('pmText').value.trim();
-    if (!ticket) return toast('Enter the HubSpot ticket ID or link', true);
-    if (!text) return toast('The note is empty', true);
-    if (!confirm(`Post this note to HubSpot ticket ${ticket.replace(/.*[/]/, '')}?`)) return;
-    $('pmPost').disabled = true;
-    try {
-      const res = await api('postPmNote', no, ticket, text);
-      const o = orderByNo(no);
-      if (o) o.pmNote = res.sent;
-      openOrder(no);
-      toast(`Note posted to HubSpot ticket ${res.ticketId}`);
-    } catch (e) { if ($('pmPost')) $('pmPost').disabled = false; fail(e); }
-  }
-  let trk = null;
-  function trackerText(v) {
-    const [when, who, n] = String(v).split(' · ');
-    return `🧾 Logged in the tracker ${when || ''}${who ? ' by ' + personName(who) : ''}${n ? ' (' + n + ')' : ''}`;
-  }
-  const trackerAudit = day => /^\d{4}-\d{2}-\d{2}$/.test(day || '')
-    ? new Date(day + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) + ' Counts' : '';
-  const TRK_HEAD = [['date', 'Date'], ['audit', 'Audit Period'], ['activity', 'Activity type'], ['service', 'Service/Monta Migration'],
-    ['projectName', 'Project Name'], ['projectNo', 'Project #'], ['from', 'From Location'], ['to', 'To Location'],
-    ['contact', 'Point of Contact'], ['freight', 'Freight Service / Company'], ['vendor', 'Company / Vendor'], ['pm', 'PM']];
-  async function openTracker(no) {
-    if (viewOnly()) return;
-    openSheet(`<h2>🧾 Log entry in tracker</h2><div class="loading">Reading ${esc(no)} and the tracker…</div>`);
-    $('sheet').dataset.panel = 'tracker';
-    let r;
-    try { r = await api('getTrackerDraft', no); } catch (e) { closeSheet(); return fail(e); }
-    if ($('sheet').dataset.panel !== 'tracker') return;
-    trk = Object.assign(r, { autoAudit: r.head.audit });
-    renderTracker();
-  }
-  async function openReturnTracker(i) {
-    const past = i != null ? retList && retList[i] : null;
-    if (viewOnly() || (i != null ? !past : !rcvDone)) return;
-    const back = () => past ? openReturns(true) : showRcvDone();
-    openSheet(`<h2>🧾 Log entry in tracker</h2><div class="loading">Reading the return and the tracker…</div>`);
-    $('sheet').dataset.panel = 'tracker';
-    let r;
-    try { r = await api('getReturnTrackerDraft', past ? past.adjIds : rcvDone.res.adjustments.map(a => a.id)); } catch (e) { back(); return fail(e); }
-    if ($('sheet').dataset.panel !== 'tracker') return;
-    trk = Object.assign(r, { kind: 'return', past, isPo: !!(past ? retKind === 'po' : rcvDone.done.mode === 'po'), autoAudit: r.head.audit });
-    renderTracker();
   }
