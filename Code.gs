@@ -228,7 +228,7 @@ function requireRole_(min) {
 function getMe() {
   const role = myRole_();
   return { email: currentUser_(), role, roleName: ROLE_NAMES[role] || '', isOwner: currentUser_().toLowerCase() === ownerEmail_(), ownerEmail: ownerEmail_(),
-    hidden: role ? myHiddenScreens_() : [], resume: role ? myResume_() : '', appUrl: appUrl_(), sbAi: !!role && sbAiAllowed_(), countSheet: role ? countAccess_() : '' };
+    hidden: role ? myHiddenScreens_() : [], resume: role ? myResume_() : '', appUrl: appUrl_(), sbAi: !!role && sbAiAllowed_(), countSheet: role ? countAccess_() : '', reach: role ? myReach_() : [] };
 }
 /** The app's own web address, for the "Reload" button the app shows if its connection was lost while the phone slept. */
 function appUrl_() { try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; } }
@@ -1855,7 +1855,8 @@ function getItems() {
   const counts = {}, docsByKey = {};
   readComments_(commentsSheet_()).forEach(c => counts[c.key] = (counts[c.key] || 0) + 1);
   // Each item's PDFs (newest first, like its Documents section) so the list can show them as buttons
-  const tagsByKey = {}, minByKey = {};
+  const tagsByKey = {}, minByKey = {}, ownerByKey = {};
+  readItemOwners_().forEach(o => ownerByKey[o.key] = o.owner);
   readItemTags_().forEach(t => tagsByKey[t.key] = t);
   readMinStock_().forEach(m => minByKey[m.key] = m);
   const epByKey = {};   // each item's endpoints, from every order line it's on
@@ -1879,7 +1880,7 @@ function getItems() {
     .map((row, i) => Object.assign(rowToItem_(row, i + 2, cols, all.shown[i]), { qtyColor: cellFill_(fills[i][0]) }))
     .filter(item => item.name && (seeAll || isGreen_(item.qtyColor)))
     .map(item => Object.assign(item, { tags: (tagsByKey[item.key] || {}).tags || [], endpoints: unionTags_([epByKey[item.key], rcvEp[item.key]]), serials: unionTags_([snByKey[item.key], rcvSn[item.key]]),
-      minTrack: !!(minByKey[item.key] || {}).track, minQty: (minByKey[item.key] || {}).min ?? null,
+      owner: ownerByKey[item.key] || '', minTrack: !!(minByKey[item.key] || {}).track, minQty: (minByKey[item.key] || {}).min ?? null,
       rcvEndpoints: rcvEp[item.key] || [], rcvSerials: rcvSn[item.key] || [], commentCount: counts[item.key] || 0, documentCount: (docsByKey[item.key] || []).length, documents: docsByKey[item.key] || [] }));
 }
 
@@ -2057,6 +2058,7 @@ function saveItem(item) {
     if (item.id) {
       rowNum = locate_(sheet, cols, item.id, item.key);
       before = readItem_(sheet, cols, rowNum);
+      requireItemOwner_(before.key);
     } else {
       rowNum = lastItemRow_(sheet, cols) + 1;
       if (rowNum > sheet.getMaxRows()) sheet.insertRowAfter(sheet.getMaxRows());
@@ -2094,6 +2096,9 @@ function saveItem(item) {
       if (saved.repriced.length) priceNote += ' (also on draft ' + saved.repriced.join(', ') + ')';
     }
     log_(before ? 'Edit' : 'Create', saved, saved.quantity - (before ? before.quantity : 0), priceNote);
+    if (!before) itemOwnersSheet_().appendRow([asText_(saved.key), currentUser_(), new Date()]);   // 🔐 who created it
+    else if (before.key !== saved.key) { const ow = readItemOwners_().find(x => x.key === before.key); if (ow) itemOwnersSheet_().getRange(ow.row, 1).setValue(asText_(saved.key)); }
+    saved.owner = before ? itemOwnerOf_(saved.key) : currentUser_().toLowerCase();
     return saved;
   });
 }
@@ -3126,8 +3131,134 @@ function requireEndpointOwner_(orderNo) {
 }
 function requireOrderOwner_(orderNo) {
   const o = readOrderRows_().find(x => x.orderNo === String(orderNo || ''));
-  if (!o || !orderOwnerOf_(o) || orderOwnerOf_(o) === currentUser_().toLowerCase()) return;
-  throw new Error('Only ' + o.createdBy + ', who created ' + o.orderNo + ', can change it.');
+  if (!o || ownerBypass_ || canChangeOwned_(orderOwnerOf_(o))) return;
+  throw new Error('[needs-approval] ' + (orderOwnerOf_(o) ? 'Only ' + o.createdBy + ', who created ' + o.orderNo + ', (or an admin above them) can change it.' : o.orderNo + ' has no Created By, so it belongs to the admins.') + ' Send a change request instead.');
+}
+
+// ---------- 🔐 Who can change what (items and orders) ----------
+// The person who created something can change or remove it. Things with no recorded creator belong to the admins.
+// An admin can also change what's owned by anyone they added (or anyone those people added, all the way down). The app
+// owner can change anything. Everyone else sends a ✋ change request to the owner, who approves or declines it.
+let ownerBypass_ = false;   // set while an approved request is being applied
+function belowMe_(email) {   // was this person added by me, directly or down the chain?
+  const me = currentUser_().toLowerCase(), all = readUsers_(), seen = new Set();
+  let u = all.find(x => x.email === String(email || '').toLowerCase());
+  while (u && !seen.has(u.email)) { seen.add(u.email); const by = String(u.addedBy || '').trim().toLowerCase(); if (by === me) return true; u = all.find(x => x.email === by); }
+  return false;
+}
+function canChangeOwned_(owner) {
+  owner = String(owner || '').trim().toLowerCase();
+  const me = currentUser_().toLowerCase();
+  if (me === ownerEmail_() || (owner && owner === me)) return true;
+  if (myRole_() !== 'Admin') return false;
+  return !owner || belowMe_(owner);
+}
+/** Everyone I can change things for without asking (for the app: [] = only my own; '*' = everything). */
+function myReach_() {
+  const me = currentUser_().toLowerCase();
+  if (me === ownerEmail_()) return ['*'];
+  if (myRole_() !== 'Admin') return [];
+  return readUsers_().filter(u => belowMe_(u.email)).map(u => u.email);
+}
+// Who created each item (a hidden tab; the master sheet's columns stay as they are). Items from before have no owner.
+const ITEM_OWNERS_SHEET = 'Item Owners', ITEM_OWNER_HEADERS = ['Item Key', 'Owner', 'Created'];
+function itemOwnersSheet_() { const sh = tabWithHeaders_(ITEM_OWNERS_SHEET, ITEM_OWNER_HEADERS); try { if (!sh.isSheetHidden()) sh.hideSheet(); } catch (e) { /* fine */ } return sh; }
+function readItemOwners_() { const sh = itemOwnersSheet_(), last = sh.getLastRow(); if (last < 2) return []; return sh.getRange(2, 1, last - 1, 3).getValues().map((r, i) => ({ row: i + 2, key: String(r[0]), owner: String(r[1]).trim().toLowerCase() })).filter(x => x.key); }
+const itemOwnerOf_ = key => (readItemOwners_().find(x => x.key === key) || {}).owner || '';
+function requireItemOwner_(key) {
+  if (ownerBypass_ || canChangeOwned_(itemOwnerOf_(key))) return;
+  const o = itemOwnerOf_(key);
+  throw new Error('[needs-approval] ' + (o ? 'Only ' + o + ', who added this item, (or an admin above them) can change it.' : 'This item has no recorded creator, so it belongs to the admins.') + ' Send a change request instead.');
+}
+
+// ✋ Change requests: someone asks the owner to edit or remove an item, or edit or cancel an order. The owner (or an
+// admin above them, or the app owner) approves it, and the change is made exactly as asked; or declines it with a note.
+const CHG_SHEET = 'Change Requests';
+const CHG_HEADERS = ['ID', 'Requested', 'By', 'Kind', 'Ref', 'Name', 'Action', 'Payload', 'Summary', 'To', 'Status', 'Decided', 'Decided By', 'Note'];
+function chgSheet_() { const sh = tabWithHeaders_(CHG_SHEET, CHG_HEADERS); try { if (!sh.isSheetHidden()) sh.hideSheet(); } catch (e) { /* fine */ } return sh; }
+function readChg_() {
+  const sh = chgSheet_(), last = sh.getLastRow(); if (last < 2) return [];
+  const iso = v => v instanceof Date ? v.toISOString() : String(v || '');
+  return sh.getRange(2, 1, last - 1, CHG_HEADERS.length).getValues().map((r, i) => ({ row: i + 2, id: String(r[0]), requested: iso(r[1]), by: String(r[2]).toLowerCase(), kind: String(r[3]), ref: String(r[4]),
+    name: String(r[5]), action: String(r[6]), payload: String(r[7]), summary: (() => { try { return JSON.parse(r[8] || '[]'); } catch (e) { return []; } })(), to: String(r[9]).toLowerCase(), status: String(r[10]),
+    decided: iso(r[11]), decidedBy: String(r[12]), note: String(r[13]) })).filter(x => x.id);
+}
+/** kind 'item' | 'order'; action 'edit' | 'remove' (an order's remove = cancel); payload: what saveItem / saveOrder would get. */
+function requestChange(kind, ref, action, payload, reason) {
+  requireRole_('Editor');
+  kind = kind === 'order' ? 'order' : 'item'; action = action === 'remove' ? 'remove' : 'edit'; ref = String(ref || '');
+  let owner = '', name = '', summary = [];
+  if (kind === 'item') {
+    const sheet = master_(), cols = columns_(sheet), it = readItem_(sheet, cols, locate_(sheet, cols, payload && payload.id || '', ref));
+    owner = itemOwnerOf_(ref); name = it.name;
+    if (action === 'edit') EDITABLE.concat(['cost']).forEach(f => { if (payload[f] === undefined || cols[f] === -1) return; const a = String(it[f] ?? ''), b = String(payload[f] ?? '').trim(); if (a !== b && !(f === 'cost' && Number(a) === Number(b))) summary.push([f, a, b]); });
+  } else {
+    const o = readOrderRows_().find(x => x.orderNo === ref); if (!o) throw new Error('Order ' + ref + ' was not found.');
+    owner = orderOwnerOf_(o); name = ref + (o.projectName ? ' · ' + o.projectName : '');
+    if (action === 'edit') {
+      ['projectName', 'projectNo', 'activityType', 'fromLocation', 'toLocation', 'contact', 'freight', 'vendor', 'pm', 'notes', 'shipTo', 'shipDate', 'deliveryDate', 'orderDate'].forEach(f => { if (payload[f] === undefined) return; const a = String(o[f] ?? ''), b = String(payload[f] ?? '').trim(); if (a !== b) summary.push([f, a, b]); });
+      const before = {}, items = itemsByKey_(); readLineRows_().filter(l => l.orderNo === ref).forEach(l => before[l.key] = (before[l.key] || 0) + l.qty);
+      const after = {}; (payload.lines || []).forEach(l => after[l.key] = (after[l.key] || 0) + (Number(l.qty) || 0));
+      new Set(Object.keys(before).concat(Object.keys(after))).forEach(k => { if ((before[k] || 0) !== (after[k] || 0)) summary.push([(items[k] && items[k].name) || k, String(before[k] || 0), String(after[k] || 0)]); });
+    }
+  }
+  if (canChangeOwned_(owner)) throw new Error('You can make this change yourself.');
+  if (action === 'edit' && !summary.length) throw new Error('Nothing changed.');
+  const to = owner && readUsers_().some(u => u.email === owner) ? owner : ownerEmail_();
+  return withLock_(() => {
+    const sh = chgSheet_();
+    readChg_().filter(c => c.by === currentUser_().toLowerCase() && c.kind === kind && c.ref === ref && c.action === action && c.status === 'Pending').forEach(c => sh.getRange(c.row, 11, 1, 2).setValues([['Replaced', new Date()]]));
+    sh.appendRow([Utilities.getUuid(), new Date(), currentUser_(), kind, asText_(ref), asText_(name), action, JSON.stringify(payload || {}), JSON.stringify(summary.concat(reason ? [['reason', '', String(reason).slice(0, 300)]] : [])), to, 'Pending', '', '', '']);
+    sh.getRange(sh.getLastRow(), 5).setNumberFormat('@');
+    bumpPulse_('@{' + to + '}');
+    return getChangeRequests();
+  });
+}
+/** { mine (last 60 days), toMe: pending ones I can decide } */
+function getChangeRequests() {
+  requireRole_('Viewer');
+  const me = currentUser_().toLowerCase(), cut = Date.now() - 60 * 864e5, all = readChg_().sort((a, b) => b.requested.localeCompare(a.requested));
+  const out = c => { const o = Object.assign({}, c); delete o.row; delete o.payload; return o; };
+  const ownerOfTarget = c => c.kind === 'item' ? itemOwnerOf_(c.ref) : orderOwnerOf_(readOrderRows_().find(o => o.orderNo === c.ref) || {});
+  return { mine: all.filter(c => c.by === me && Date.parse(c.requested) > cut).map(out),
+    toMe: all.filter(c => c.status === 'Pending' && c.by !== me && (c.to === me || canChangeOwned_(ownerOfTarget(c)))).map(out) };
+}
+function decideChange(id, approve, note) {
+  requireRole_('Editor');
+  const c = readChg_().find(x => x.id === String(id));
+  if (!c || c.status !== 'Pending') throw new Error('That request was already handled.');
+  const owner = c.kind === 'item' ? itemOwnerOf_(c.ref) : orderOwnerOf_(readOrderRows_().find(o => o.orderNo === c.ref) || {});
+  if (!canChangeOwned_(owner)) throw new Error('Only the owner (or an admin above them) can decide this request.');
+  let result = '';
+  if (approve) {
+    const payload = JSON.parse(c.payload || '{}');
+    ownerBypass_ = true;
+    try {
+      if (c.kind === 'item') result = c.action === 'remove' ? removeItem(payload.id || '', c.ref) : saveItem(payload);
+      else result = c.action === 'remove' ? cancelOrder(c.ref) : saveOrder(payload);
+    } finally { ownerBypass_ = false; }
+  }
+  withLock_(() => {
+    chgSheet_().getRange(c.row, 11, 1, 4).setValues([[approve ? 'Approved' : 'Declined', new Date(), currentUser_(), asText_(String(note || '').trim().slice(0, 300))]]);
+    logSheet_().appendRow([new Date(), currentUser_(), approve ? 'Change approved' : 'Change declined', '', c.name, '', '', 0, '', (c.action === 'remove' ? (c.kind === 'order' ? 'Cancel' : 'Remove') : 'Edit') + ' asked by ' + c.by]);
+  });
+  bumpPulse_('@{' + c.by + '}');
+  return { requests: getChangeRequests(), result };
+}
+/** 🗑 Remove an item from the master sheet (its row). Not while it's on a draft order. The owner, or an admin above them. */
+function removeItem(id, key) {
+  requireRole_('Editor');
+  requireItemOwner_(String(key || ''));
+  return withLock_(() => {
+    const sheet = master_(), cols = columns_(sheet), rowNum = locate_(sheet, cols, id, key), it = readItem_(sheet, cols, rowNum);
+    const drafts = new Set(readOrderRows_().filter(o => o.status === 'Draft').map(o => o.orderNo));
+    const on = [...new Set(readLineRows_().filter(l => l.key === it.key && drafts.has(l.orderNo)).map(l => l.orderNo))];
+    if (on.length) throw new Error(it.name + ' is on draft order' + (on.length === 1 ? ' ' : 's ') + on.join(', ') + '. Take it off first.');
+    log_('Removed', it, -it.quantity, 'Row ' + rowNum + ' removed from the sheet');
+    sheet.deleteRow(rowNum);
+    const ow = readItemOwners_().find(x => x.key === it.key); if (ow) itemOwnersSheet_().deleteRow(ow.row);
+    return { removed: it.key };
+  });
 }
 
 const isEvse_ = item => !!item && String(item.category || '').trim().replace(/\s+/g, ' ').toLowerCase() === 'evse';
