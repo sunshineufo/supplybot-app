@@ -27,7 +27,7 @@
   .go { background: var(--ink); color: var(--bg); }
   .inst { background: var(--brand); color: #10200a; }
   .steps { text-align: left; margin: 16px 0 0; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--ink) 6%, transparent); font-size: 14.5px; }
-  .steps ol { margin: 6px 0 0; padding-left: 20px; } .steps li { margin: 4px 0; }
+  .steps ol { margin: 6px 0 0; padding-left: 20px; } .steps li { margin: 4px 0; } .steps .tip { margin: 8px 0 0; font-size: 13px; opacity: .8; }
   .hide { display: none !important; }
   /* in the installed app: Supplybot fills the screen inside the app (no browser bar) */
   #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #111; display: none; }
@@ -41,7 +41,7 @@
 </head>
 <body>
 <iframe id="frame" title="Supplybot" allow="camera *; microphone *; geolocation *; clipboard-read *; clipboard-write *; fullscreen *; web-share *" referrerpolicy="origin"></iframe>
-<div id="help" class="hide"><b>Supplybot is taking a while…</b><p>If Google wants you to sign in, open Supplybot once to sign in, then come back and tap Try again.</p>
+<div id="help" class="hide"><b>Supplybot is taking a while…</b><p id="helpTxt">If Google wants you to sign in, open Supplybot once to sign in, then come back and tap Try again.</p>
   <div class="row"><a class="btn go" id="signin" href="#" target="_blank" rel="noopener">Sign in ›</a><button class="btn again" id="again">Try again</button></div></div>
 <div class="card">
   <div class="bot"><svg width="100%" height="100%" viewBox="-20 -20 480 490" aria-hidden="true" focusable="false"><g fill="rgb(17, 17, 17)">
@@ -56,7 +56,7 @@
   <p id="msg">Inventory and orders for EnviroSpark.</p>
   <a class="btn go" id="open" href="#">Open Supplybot ›</a>
   <button class="btn inst hide" id="install">📲 Install the app</button>
-  <div class="steps hide" id="ios"><b>Install on iPhone / iPad</b><ol><li>Tap the <b>Share</b> button (the square with the arrow).</li><li>Tap <b>Add to Home Screen</b>.</li><li>Tap <b>Add</b>. Supplybot is on your home screen.</li></ol></div>
+  <div class="steps hide" id="ios"><b>Install on iPhone / iPad</b><ol><li>Tap <b>Open Supplybot</b> above and sign in with your envirosparkenergy.com Google account if it asks.</li><li>On the Supplybot page, tap the <b>Share</b> button (the square with the arrow).</li><li>Tap <b>Add to Home Screen</b>, leave <b>Open as Web App</b> on, and tap <b>Add</b>.</li></ol><p class="tip">It opens full screen with no address bar, straight into Supplybot. (Add it from the Supplybot page, not this one: iPhones won’t keep you signed in when Supplybot is shown inside this page.)</p></div>
   <div class="warn hide" id="setup"><b>One more step:</b> open <code>index.html</code> and paste Supplybot’s address into the <code>APP_URL</code> line (see README.md).</div>
 </div>
 <script>
@@ -72,9 +72,10 @@
     $('open').href = APP_URL;
     if (standalone) {   // opened from the home screen: Supplybot fills the app (no browser bar)
       const frame = $('frame'); let ready = false, waitT = 0;
-      const load = () => { ready = false; $('help').classList.add('hide'); frame.src = APP_URL; clearTimeout(waitT); waitT = setTimeout(() => { if (!ready) $('help').classList.remove('hide'); }, 15000); };
+      const load = () => { ready = false; $('help').classList.add('hide'); frame.src = APP_URL; clearTimeout(waitT); waitT = setTimeout(() => { if (!ready) $('help').classList.remove('hide'); }, ios ? 6000 : 15000); };   // iPhone: Google's sign-in can't load in here, so the way out shows sooner
       addEventListener('message', e => { if (/^https:[/][/]([a-z0-9-]+[.])*(google[.]com|googleusercontent[.]com)$/i.test(e.origin) && e.data && e.data.supplybot === 'ready') { ready = true; $('help').classList.add('hide'); } });
       $('signin').href = APP_URL; $('again').onclick = load;
+      if (ios) { $('helpTxt').innerHTML = 'On iPhone, install Supplybot from its own page instead: tap <b>Open in Safari</b>, then <b>Share → Add to Home Screen</b>. It opens full screen and stays signed in. You can then remove this icon.'; $('signin').textContent = 'Open in Safari ›'; }
       document.body.classList.add('framed'); load();
     } else if (ios) $('ios').classList.remove('hide');
   }
