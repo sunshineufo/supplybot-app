@@ -8,28 +8,55 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Supplybot">
 <title>Supplybot</title>
+<!-- 🔖 Supplybot on the browser tab (and a picture version for Safari and the iPhone home screen, made when the page opens) -->
+<link id="ico" rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%22-80 -40 460 532%22><rect x=%22-80%22 y=%22-40%22 width=%22460%22 height=%22532%22 rx=%22110%22 fill=%22%230f172a%22/><g fill=%22%23e2e8f0%22> <rect x=%2285%22 y=%223%22 width=%2225%22 height=%2272%22 rx=%2212.5%22/><rect x=%22190%22 y=%223%22 width=%2225%22 height=%2272%22 rx=%2212.5%22/> <rect x=%2218%22 y=%2265%22 width=%22264%22 height=%22207%22 rx=%2270%22/> <rect fill=%22%230f172a%22 x=%2253%22 y=%22105%22 width=%22194%22 height=%22127%22 rx=%2240%22/> <circle fill=%22%2394ba65%22 cx=%22110%22 cy=%22162%22 r=%2220%22/><circle fill=%22%2394ba65%22 cx=%22190%22 cy=%22162%22 r=%2220%22/> <path fill=%22none%22 stroke=%22%2394ba65%22 stroke-width=%2213%22 stroke-linecap=%22round%22 d=%22M118 198Q150 222 182 198%22/> <rect x=%22128%22 y=%22268%22 width=%2244%22 height=%2226%22/> <rect x=%2245%22 y=%22290%22 width=%22210%22 height=%22158%22 rx=%2238%22/> <rect x=%225%22 y=%22312%22 width=%2232%22 height=%2288%22 rx=%2216%22/><rect x=%22263%22 y=%22312%22 width=%2232%22 height=%2288%22 rx=%2216%22/></g> <path class=%22eye bi-bolt%22 d=%22M165 313L125 373H148L137 425L180 358H157Z%22/></svg>">
 <style>
   html, body { margin: 0; height: 100%; background: #0f172a; color: #e2e8f0; font: 16px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
   #app { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #0f172a; }
   #wait { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: #0f172a; transition: opacity .4s; z-index: 2; }
   #wait.gone { opacity: 0; pointer-events: none; }
-  .logo { font-size: 30px; font-weight: 800; letter-spacing: .02em; }
+  .logo { font-size: 26px; font-weight: 800; letter-spacing: .02em; margin-top: 6px; }
   .logo b { color: #94ba65; }
+  /* ⚡ the EnviroSpark O (its brackets turn, the bolt flashes) with Supplybot hopping beside it */
+  .duo { display: flex; align-items: flex-end; justify-content: center; gap: 18px; }
+  .eso { width: 120px; height: 114px; fill: #94ba65; overflow: visible; filter: drop-shadow(0 0 18px rgba(148, 186, 101, .35)); }
+  .eso .ring { transform-box: view-box; transform-origin: 346px 35px; animation: ring 2.6s cubic-bezier(.6, 0, .3, 1) infinite; }
+  .eso .bolt { transform-box: view-box; transform-origin: 346px 35px; animation: zap 2.6s ease-in-out infinite; }
+  @keyframes ring { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(180deg); } }
+  @keyframes zap { 0%, 55%, 100% { opacity: 1; filter: none; transform: scale(1); } 62% { opacity: .25; } 68% { opacity: 1; filter: drop-shadow(0 0 8px #e5ffb8); transform: scale(1.12); } }
+  .sbot { width: 74px; height: 112px; fill: #e2e8f0; transform-origin: 50% 100%; animation: hop 1.3s cubic-bezier(.3, 0, .4, 1) infinite; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .4)); }
+  .sbot .screen { fill: #0f172a; } .sbot .eye { fill: #94ba65; transform-box: fill-box; transform-origin: center; animation: blink 4s infinite; }
+  .sbot .smile { fill: none; stroke: #94ba65; stroke-width: 11; stroke-linecap: round; }
+  @keyframes hop { 0%, 100% { transform: translateY(0) rotate(-5deg) scale(1, .96); } 45% { transform: translateY(-16px) rotate(5deg) scale(.98, 1.03); } }
+  @keyframes blink { 0%, 90%, 100% { transform: scaleY(1); } 94% { transform: scaleY(.1); } }
+  @media (prefers-reduced-motion: reduce) { .eso *, .sbot, .sbot * { animation: none !important; } }
   .spin { width: 42px; height: 42px; margin: 18px auto; border-radius: 50%; border: 4px solid rgba(148, 186, 101, .25); border-top-color: #94ba65; animation: s 1s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
   #help { display: none; max-width: 360px; }
   #help.on { display: block; }
   #help p { color: #cbd5e1; margin: 10px 0 18px; }
-  #help a { display: inline-block; padding: 14px 26px; border-radius: 14px; background: #94ba65; color: #0f172a; font-weight: 800; text-decoration: none; }
+  #help a { display: inline-block; padding: 16px 34px; font-size: 18px; border-radius: 14px; background: #94ba65; color: #0f172a; font-weight: 800; text-decoration: none; }
 </style>
 </head>
 <body>
 <div id="wait">
   <div>
-    <div class="logo">⚡ <b>Supply</b>bot</div>
+    <div class="duo"><svg class="eso" viewBox="305 -4 82 78" role="img" aria-label="EnviroSpark"><g class="ring"><path d="M336.07 59.24C323.28 57.68 316.23 51.98 316.23 34.95C316.23 14.82 326.09 10.6 343.65 10.27L347.74 3.65999C347.19 3.65999 346.65 3.64999 346.09 3.64999C323.19 3.64999 310.21 9.98 310.21 34.95C310.21 55.56 319.06 63.47 335.03 65.6L335.37 63.57C335.61 62.12 335.85 60.68 336.08 59.23L336.07 59.24Z"/><path d="M356.86 4.25998L355.81 10.71C368.76 12.2 375.86 17.8 375.86 34.95C375.86 55.4 365.77 59.51 347.69 59.73L343.68 66.22C344.47 66.24 345.27 66.25 346.09 66.25C368.99 66.25 381.9 59.92 381.9 34.95C381.9 14.22 373 6.33998 356.87 4.25998H356.86Z"/></g><path class="bolt" d="M337.91 68.75C337.98 68.77 338.04 68.8 338.11 68.82C345.95 56.14 353.78 43.46 361.72 30.63H349.14C350.82 20.37 352.48 10.21 354.14 0.05C354.08 0.03 354.02 0.02 353.96 0C346.14 12.65 338.32 25.31 330.37 38.15H342.92C342.07 43.38 341.26 48.46 340.43 53.54C339.6 58.61 338.76 63.68 337.92 68.74L337.91 68.75Z"/></svg>
+      <svg class="sbot" viewBox="0 0 300 452" aria-hidden="true"><g class="bi-body">
+        <rect x="85" y="3" width="25" height="72" rx="12.5"/><rect x="190" y="3" width="25" height="72" rx="12.5"/>
+        <rect x="18" y="65" width="264" height="207" rx="70"/>
+        <rect class="screen" x="53" y="105" width="194" height="127" rx="40"/>
+        <circle class="eye" cx="110" cy="162" r="20"/><circle class="eye" cx="190" cy="162" r="20"/>
+        <path class="smile" d="M118 198Q150 222 182 198"/>
+        <rect x="128" y="268" width="44" height="26"/>
+        <rect x="45" y="290" width="210" height="158" rx="38"/>
+        <rect x="5" y="312" width="32" height="88" rx="16"/><rect x="263" y="312" width="32" height="88" rx="16"/></g>
+        <path class="eye bi-bolt" d="M165 313L125 373H148L137 425L180 358H157Z"/></svg></div>
+    <div class="logo"><b>Supply</b>bot</div>
     <div class="spin" id="spin"></div>
+    <div id="msg" style="color:#cbd5e1">Opening…</div>
     <div id="help">
-      <p>Supplybot is taking a while to open here. This usually means your browser wants you to sign in to Google first, which works best on Google's own page.</p>
+      <p id="helpp">If Supplybot didn't open by itself, tap below.</p>
       <a id="open" target="_top" rel="noopener">Open Supplybot</a>
     </div>
   </div>
@@ -41,21 +68,32 @@
   /* ✏️ Paste your Supplybot web app address here: Apps Script → Deploy → Manage deployments → the Web app URL (it ends in /exec) */
   var APP_URL = 'https://script.google.com/macros/s/AKfycbyT16dSQC9gSsHfPon0lcniHOdX9NKFR-bHolk-AsNem2henJq6jJIrfNTzv7OXNFSo/exec';
 
+  (function () { try { var l = document.getElementById('ico'), im = new Image(); im.onload = function () { var c = document.createElement('canvas'); c.width = c.height = 180;
+    var g = c.getContext('2d'), k = Math.min(180 / im.naturalWidth || 1, 180 / im.naturalHeight || 1); g.drawImage(im, 0, 0, 180, 180); var u = c.toDataURL('image/png');
+    var p = document.createElement('link'); p.rel = 'icon'; p.type = 'image/png'; p.href = u; document.head.appendChild(p); var t = document.createElement('link'); t.rel = 'apple-touch-icon'; t.href = u; document.head.appendChild(t); }; im.src = l.href; } catch (x) {} })();
   var app = document.getElementById('app'), wait = document.getElementById('wait'), ready = false, go = APP_URL + (location.search || '');   /* links like ?setup=1 or ?order=… are passed through */
   document.getElementById('open').href = go;
   /* 📱 iPhone, iPad (every browser there) and Safari on a Mac block your Google sign-in inside another website's frame, so Google
      answers "401". There, Supplybot opens directly instead (your sign-in works); everywhere else it opens inside this page. */
   var ua = navigator.userAgent, apple = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
     || (/Safari/.test(ua) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android/.test(ua));
-  if (apple) location.replace(go);
+  /* inside another site's frame (e.g. a domain forwarded "with masking"), a page may only switch the whole tab after a tap */
+  var framed = true; try { framed = window.top !== window; } catch (x) { framed = true; }
+  function tapToOpen() { document.getElementById('spin').style.display = 'none'; document.getElementById('msg').style.display = 'none';
+    document.getElementById('helpp').textContent = 'Tap to open Supplybot.'; document.getElementById('help').classList.add('on'); }
+  if (apple && framed) tapToOpen();
+  else if (apple) location.replace(go);
   else app.src = go;
   /* Supplybot says "ready" once it has opened inside this page */
   window.addEventListener('message', function (e) {
     if (!/\.googleusercontent\.com$/.test(new URL(e.origin).hostname)) return;
     if (e.data && e.data.supplybot === 'ready') { ready = true; wait.classList.add('gone'); }
   });
-  /* not open after 9 seconds (usually Google sign-in, which can't show inside another site): offer to open it directly */
-  setTimeout(function () { if (ready) return; document.getElementById('spin').style.display = 'none'; document.getElementById('help').classList.add('on'); }, 9000);
+  /* not open inside this page after 10 seconds (usually Google sign-in, which can't show inside another site): open it directly, by itself.
+     The button stays as a backup in case the browser stops the switch. */
+  function direct() { try { if (window.top !== window) { window.top.location.href = go; return; } } catch (x) {} location.replace(go); }
+  if (!(apple && framed)) setTimeout(function () { if (ready) return; document.getElementById('msg').textContent = 'Opening Supplybot…'; direct();
+    setTimeout(function () { if (ready) return; document.getElementById('spin').style.display = 'none'; document.getElementById('help').classList.add('on'); }, 4000); }, 10000);   /* ✏️ how long to wait (ms) */
 </script>
 </body>
 </html>
