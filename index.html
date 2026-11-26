@@ -90,7 +90,10 @@
     <div id="msg">Charging up…</div>
   </div>
 </div>
+<!-- 🔒 Supplybot may only take over the whole tab when you click something in it (like its ⟳ Reload), never by itself: Google's page
+     sometimes reloads itself in the whole tab, which would bring back its "created by a Google Apps Script user" bar -->
 <iframe id="app" title="Supplybot"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-storage-access-by-user-activation allow-top-navigation-by-user-activation allow-pointer-lock allow-presentation allow-orientation-lock"
   allow="camera; microphone; geolocation; clipboard-read; clipboard-write; fullscreen; display-capture; web-share; autoplay"
   allowfullscreen></iframe>
 <script>
@@ -108,7 +111,7 @@
     window.__batt = setInterval(function () { var v = Math.round(3 + 92 * (1 - Math.exp(-(Date.now() - t0) / 4500))); if (window.__full) v = 100; b.style.width = v + '%'; pc.textContent = v >= 100 ? 'Fully charged ⚡' : 'Charging · ' + v + '%'; }, 120);
     var M = ['Charging up…', 'Waking up Supplybot…', 'Counting the shelves…', 'Syncing your inventory…', 'Checking on your orders…', 'Almost charged…'], n = 0, el = document.getElementById('msg');
     window.__msgT = setInterval(function () { if (el.style.display === 'none' || /Opening Supplybot/.test(el.textContent)) return; el.classList.add('fade'); setTimeout(function () { n = (n + 1) % M.length; el.textContent = M[n]; el.classList.remove('fade'); }, 300); }, 2000); })();
-  var app = document.getElementById('app'), wait = document.getElementById('wait'), ready = false, go = String(APP_URL || '').trim() + (location.search || '');   /* links like ?setup=1 or ?order=… are passed through */
+  var app = document.getElementById('app'), wait = document.getElementById('wait'), ready = false, alive = false, go = String(APP_URL || '').trim() + (location.search || '');   /* links like ?setup=1 or ?order=… are passed through */
   /* 📱 iPhone, iPad (every browser there) and Safari on a Mac block your Google sign-in inside another website's frame, so Google
      answers "401". There, Supplybot opens directly instead (your sign-in works); everywhere else it opens inside this page. */
   var ua = navigator.userAgent, apple = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
@@ -125,20 +128,25 @@
   if (bad) { clearInterval(window.__msgT); var mm = document.getElementById('msg'); mm.textContent = '⚠️ ' + bad; mm.style.maxWidth = '420px'; mm.style.margin = '0 auto'; mm.style.opacity = '1'; } else {
   /* 📱 an iPhone showing this page inside another site's frame (a domain forwarded "with masking") only lets it open Supplybot after a touch:
      say so, so it never looks stuck */
-  if (apple && framed) setTimeout(function () { if (ready) return; clearInterval(window.__msgT); var mm = document.getElementById('msg'); mm.textContent = '👆 Tap anywhere to open Supplybot'; mm.style.opacity = '1'; mm.classList.add('tapme'); }, 1500);
-  if (framed) ['pointerup', 'touchend', 'keydown'].forEach(function (ev) { document.addEventListener(ev, function () { if (!ready) direct(); }, true); });
-  if (apple && framed) { direct(); setInterval(function () { if (!ready) direct(); }, 8000); }
+  if (apple && framed) setTimeout(function () { if (ready || alive) return; clearInterval(window.__msgT); var mm = document.getElementById('msg'); mm.textContent = '👆 Tap anywhere to open Supplybot'; mm.style.opacity = '1'; mm.classList.add('tapme'); }, 1500);
+  if (framed) ['pointerup', 'touchend', 'keydown'].forEach(function (ev) { document.addEventListener(ev, function () { if (!ready && !alive) direct(); }, true); });
+  if (apple && framed) { direct(); setInterval(function () { if (!ready && !alive) direct(); }, 8000); }
   else if (apple) location.replace(go);
   else app.src = go;
   /* Supplybot says "ready" once it has opened inside this page */
   window.addEventListener('message', function (e) {
     if (!/\.googleusercontent\.com$/.test(new URL(e.origin).hostname)) return;
-    if (e.data && e.data.supplybot === 'ready') { ready = true; window.__full = true; setTimeout(function () { wait.classList.add('gone'); }, 450); }
+    if (e.data && e.data.supplybot === 'alive') { alive = true; return; }
+    if (e.data && e.data.supplybot === 'ready') { ready = true; window.__full = true; setTimeout(function () { wait.classList.add('gone'); }, 450);
+      /* ✂️ Google's "created by a Google Apps Script user" bar: Supplybot says how tall its own area is; the difference is the bar, so the
+         frame moves up by exactly that much (no bar, no move, so Supplybot's header is never cut) */
+      var h = Number(e.data.h), gap = h > 0 ? Math.round(app.getBoundingClientRect().height - h) : 0;
+      if (gap > 2 && gap < 160) { app.style.bottom = 'auto'; app.style.top = (-gap) + 'px'; app.style.height = 'calc(100% + ' + gap + 'px)'; } }
   });
   /* not open inside this page after 10 seconds (usually Google sign-in, which can't show inside another site): open it directly, by itself.
      The button stays as a backup in case the browser stops the switch. */
-  if (!(apple && framed)) setTimeout(function () { if (ready) return; document.getElementById('msg').textContent = 'Opening Supplybot…'; direct();
-    setInterval(function () { if (!ready) direct(); }, 10000); }, 10000);   /* ✏️ how long to wait before opening it directly (ms) */
+  if (!(apple && framed)) setTimeout(function () { if (ready || alive) return; document.getElementById('msg').textContent = 'Opening Supplybot…'; direct();
+    setInterval(function () { if (!ready && !alive) direct(); }, 15000); }, 40000);   /* ✏️ how long to wait before opening it directly (ms) */
   }
 </script>
 </body>
