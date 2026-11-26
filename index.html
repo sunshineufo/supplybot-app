@@ -137,7 +137,9 @@
   window.addEventListener('message', function (e) {
     if (!/\.googleusercontent\.com$/.test(new URL(e.origin).hostname)) return;
     if (e.data && e.data.supplybot === 'alive') { alive = true; return; }
-    if (e.data && e.data.supplybot === 'ready') { ready = true; window.__full = true; setTimeout(function () { wait.classList.add('gone'); }, 450);
+    /* 🖼 Supplybot is on screen with your items: the charging screen steps aside straight into it */
+    if (e.data && e.data.supplybot === 'shown') { ready = true; window.__full = true; setTimeout(function () { wait.classList.add('gone'); }, 350); }
+    if (e.data && e.data.supplybot === 'ready') { ready = true; if (!window.__shownT) window.__shownT = setTimeout(function () { window.__full = true; wait.classList.add('gone'); }, 25000);   /* (an older Supplybot never says "shown") */
       /* ✂️ Google's "created by a Google Apps Script user" bar: Supplybot says how tall its own area is; the difference is the bar, so the
          frame moves up by exactly that much (no bar, no move, so Supplybot's header is never cut) */
       var h = Number(e.data.h), gap = h > 0 ? Math.round(app.getBoundingClientRect().height - h) : 0;
